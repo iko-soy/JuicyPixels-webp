@@ -12,6 +12,17 @@ homepage:       https://github.com/ilyakooo0/JuicyPixels-webp#readme
 bug-reports:    https://github.com/ilyakooo0/JuicyPixels-webp/issues
 license:        BSD-3-Clause
 build-type:     Simple
+extra-source-files:
+    test/data/regression/transform-order.webp
+    test/data/regression/vp8-b-dc-borders.webp
+    test/data/regression/vp8-quantizer.webp
+    test/data/regression/vp8-segment-quantizer.webp
+    test/data/regression/vp8l-invalid-backref.webp
+    test/data/regression/vp8l-long-code.webp
+    test/data/regression/vp8l-meta-prefix.webp
+    test/data/regression/vp8l-truncated-pixels.webp
+    test/data/regression/vp8-fixtures.md
+    test/data/regression/vp8l-fixtures.md
 
 source-repository head
   type: git
@@ -105,7 +116,10 @@ test-suite JuicyPixels-webp-test
       SpecComplianceSpec
       StressSpec
       TransformSpec
+      TruncationSpec
       VP8EncodeSpec
+      VP8LRegressionSpec
+      VP8RegressionSpec
       Paths_JuicyPixels_webp
   autogen-modules:
       Paths_JuicyPixels_webp

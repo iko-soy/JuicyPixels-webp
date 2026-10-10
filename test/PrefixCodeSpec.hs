@@ -4,7 +4,9 @@
 module PrefixCodeSpec (spec) where
 
 import Codec.Picture.WebP.Internal.BitReader
+import Codec.Picture.WebP.Internal.BitWriter
 import Codec.Picture.WebP.Internal.VP8L.PrefixCode
+import Control.Monad (forM_)
 import Data.Bits
 import qualified Data.ByteString as B
 import qualified Data.List
@@ -49,6 +51,33 @@ spec = describe "PrefixCode" $ do
         Right _ -> expectationFailure "Expected table code"
 
   describe "Code Decoding" $ do
+    it "decodes mixed code lengths through the 15-bit limit" $ do
+      -- Complete canonical tree: 0, 10, 110, ..., fourteen 1s then 0/1.
+      -- Decode every symbol together so an incorrect consumed length also fails.
+      let lengths = VU.fromList ([1 .. 14] ++ [15, 15])
+          codewords = [(len, (1 `shiftL` len) - 2) | len <- [1 .. 15]] ++ [(15, 32767)]
+          writer = foldl (\w (len, value) -> writeBitsReversed len value w) emptyBitWriter codewords
+          reader = initBitReader $ bitWriterToByteString $ finalizeBitWriter writer
+          check _ r [] = getBitPosition r `shouldBe` sum (map fst codewords)
+          check code r (expected : rest) = do
+            let (actual, r') = decodeSymbol code r
+            actual `shouldBe` expected
+            check code r' rest
+      case buildPrefixCode lengths of
+        Left err -> expectationFailure err
+        Right code -> check code reader [0 .. 15]
+
+    it "decodes all 9-bit codes across multiple secondary tables" $ do
+      -- With 512 equally long codes, each symbol is its canonical code value.
+      case buildPrefixCode (VU.replicate 512 9) of
+        Left err -> expectationFailure err
+        Right code -> forM_ [0 .. 511] $ \expected -> do
+          let writer = writeBitsReversed 9 expected emptyBitWriter
+              reader = initBitReader $ bitWriterToByteString $ finalizeBitWriter writer
+              (actual, reader') = decodeSymbol code reader
+          actual `shouldBe` fromIntegral expected
+          getBitPosition reader' `shouldBe` 9
+
     it "decodes single-symbol code" $ do
       let lengths = VU.fromList [0, 0, 5, 0]
           bs = B.pack [0xFF]

@@ -151,7 +151,10 @@ buildPrefixCodeTable codeLengths = runST $ do
         code <- VUM.read nextCode len
         VUM.write nextCode len (code + 1)
 
-        let shortCode = code .&. ((1 `shiftL` primaryBits) - 1)
+        -- Canonical codes are read most-significant bit first. The primary
+        -- lookup therefore uses the leading bits before reversing for the
+        -- LSB-first bit reader.
+        let shortCode = code `shiftR` (len - primaryBits)
             revShort = reverseBits shortCode primaryBits
 
         -- Check if we need a new secondary table
@@ -217,8 +220,8 @@ buildPrefixCodeTable codeLengths = runST $ do
                   return (totalBits, offset)
 
         -- Fill secondary table entry
-        let longPart = code `shiftR` primaryBits
-            longBits = len - primaryBits
+        let longBits = len - primaryBits
+            longPart = code .&. ((1 `shiftL` longBits) - 1)
             revLong = reverseBits longPart longBits
             actualSecondaryBits = secondaryTableBits - primaryBits
 

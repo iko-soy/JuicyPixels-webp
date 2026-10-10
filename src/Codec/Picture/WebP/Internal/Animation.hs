@@ -18,7 +18,6 @@ import Control.Monad (forM_, when)
 import Control.Monad.ST
 import Data.Bits
 import qualified Data.ByteString as B
-import Data.Maybe (catMaybes)
 import qualified Data.Vector.Storable as VS
 import qualified Data.Vector.Storable.Mutable as VSM
 import Data.Word
@@ -154,21 +153,21 @@ composeFrames canvasWidth canvasHeight bgColor frames = do
           restImgs <- go disposeRect rest
           return (outputImg : restImgs)
 
-    go Nothing (catMaybes decoded)
+    go Nothing decoded
   where
-    decodeOne (frame, subChunks) =
-      case decodeAnimFrame (frame, subChunks) of
-        Left _ -> Right Nothing -- Skip frames that fail to decode
-        Right webpFrame ->
-          let img = webpFrameImage webpFrame
-              x = anmfX frame
-              y = anmfY frame
-           in if x < 0
-                || y < 0
-                || x + dynWidth img > canvasWidth
-                || y + dynHeight img > canvasHeight
-                then Left "Animation frame exceeds canvas bounds"
-                else Right (Just (frame, webpFrame))
+    decodeOne (frame, subChunks) = do
+      webpFrame <- decodeAnimFrame (frame, subChunks)
+      let img = webpFrameImage webpFrame
+          x = anmfX frame
+          y = anmfY frame
+      when
+        ( x < 0
+            || y < 0
+            || x + dynWidth img > canvasWidth
+            || y + dynHeight img > canvasHeight
+        )
+        $ Left "Animation frame exceeds canvas bounds"
+      return (frame, webpFrame)
 
 dynWidth, dynHeight :: DynamicImage -> Int
 dynWidth = dynamicMap imageWidth
@@ -278,21 +277,25 @@ alphaBlend srcR srcG srcB srcA dstR dstG dstB dstA =
       dstG' = fromIntegral dstG :: Int
       dstB' = fromIntegral dstB :: Int
 
-      -- blend.A = src.A + dst.A * (1 - src.A / 255)
-      blendA = srcA' + (dstA' * (255 - srcA')) `div` 255
+      -- Keep alpha weights scaled by 255 until the final divisions.
+      -- Truncating blend.A before computing RGB can produce values above 255.
+      srcWeight = srcA' * 255
+      dstWeight = dstA' * (255 - srcA')
+      totalWeight = srcWeight + dstWeight
+      blendA = totalWeight `div` 255
 
       -- if blend.A = 0 then blend.RGB = 0
       -- else blend.RGB = (src.RGB * src.A + dst.RGB * dst.A * (1 - src.A / 255)) / blend.A
       (blendR, blendG, blendB) =
-        if blendA == 0
+        if totalWeight == 0
           then (0, 0, 0)
           else
-            let numeratorR = srcR' * srcA' + dstR' * dstA' * (255 - srcA') `div` 255
-                numeratorG = srcG' * srcA' + dstG' * dstA' * (255 - srcA') `div` 255
-                numeratorB = srcB' * srcA' + dstB' * dstA' * (255 - srcA') `div` 255
-             in ( fromIntegral (numeratorR `div` blendA),
-                  fromIntegral (numeratorG `div` blendA),
-                  fromIntegral (numeratorB `div` blendA)
+            let numeratorR = srcR' * srcWeight + dstR' * dstWeight
+                numeratorG = srcG' * srcWeight + dstG' * dstWeight
+                numeratorB = srcB' * srcWeight + dstB' * dstWeight
+             in ( fromIntegral (numeratorR `div` totalWeight),
+                  fromIntegral (numeratorG `div` totalWeight),
+                  fromIntegral (numeratorB `div` totalWeight)
                 )
    in (blendR, blendG, blendB, fromIntegral blendA)
 

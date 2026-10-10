@@ -256,6 +256,8 @@ decodeLZ77 ::
   Maybe (VS.Vector Word32, Int) ->
   BitReader ->
   Either String (VS.Vector Word32, BitReader)
+decodeLZ77 _ _ _ _ _ reader
+  | hasReadPastEnd reader = Left "Unexpected end of VP8L bitstream"
 decodeLZ77 width height maybeCache codeGroups maybeEntropyImage reader = runST $ do
   when (width <= 0 || width > 16384 || height <= 0 || height > 16384) $
     error $
@@ -276,6 +278,7 @@ decodeLZ77 width height maybeCache codeGroups maybeEntropyImage reader = runST $
   let !numGroups = V.length codeGroups
 
   let loop !pos !r
+        | hasReadPastEnd r = return $ Left "Unexpected end of VP8L bitstream"
         | pos >= totalPixels = do
             result <- VS.unsafeFreeze output
             return $ Right (result, r)
@@ -345,11 +348,9 @@ decodeLZ77 width height maybeCache codeGroups maybeEntropyImage reader = runST $
                            in max 1 (xi + yi * width)
                         else distCode - 120
 
-                when (dist > pos) $
-                  error $
-                    "Distance " ++ show dist ++ " exceeds position " ++ show pos
-
-                copyLoop pos dist len output mutableCache useCache r4
+                if dist > pos
+                  then return $ Left $ "Distance " ++ show dist ++ " exceeds position " ++ show pos
+                  else copyLoop pos dist len output mutableCache useCache r4
               else do
                 let cacheIdx = fromIntegral greenSym - 280
                 if not useCache

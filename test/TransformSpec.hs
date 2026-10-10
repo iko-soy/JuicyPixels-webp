@@ -2,8 +2,11 @@
 
 module TransformSpec (spec) where
 
+import Codec.Picture (DynamicImage (..), PixelRGBA8 (..), imageHeight, imageWidth, pixelAt)
+import Codec.Picture.WebP (decodeWebP)
 import Codec.Picture.WebP.Internal.VP8L.Transform
 import Data.Bits
+import qualified Data.ByteString as B
 import qualified Data.Vector.Storable as VS
 import Data.Word
 import Test.Hspec
@@ -66,6 +69,61 @@ spec = describe "VP8L Transforms" $ do
       case applyInverseTransforms [] 1 1 pixels of
         Right result -> result `shouldBe` pixels
         Left err -> expectationFailure $ "Transform failed: " ++ err
+
+    it "applies subtract-green on the correct side of unbundled color indexing" $ do
+      let palette = VS.generate 17 $ \i -> packARGB 255 (fromIntegral i) 7 9
+          indexed = VS.fromList [packARGB 255 0 0 0, packARGB 255 0 16 0]
+          ci = TransformColorIndex palette 0
+      applyInverseTransforms [TransformSubGreen, ci] 2 1 indexed
+        `shouldBe` Right (VS.fromList [packARGB 255 7 7 16, packARGB 255 23 7 16])
+      applyInverseTransforms [ci, TransformSubGreen] 2 1 indexed
+        `shouldBe` Right (VS.fromList [palette VS.! 0, palette VS.! 16])
+
+    it "expands bundled rows before undoing an earlier predictor" $ do
+      let palette = VS.fromList [0, packARGB 0 1 1 1]
+          -- Nine pixels require two packed bytes in each row. The unused
+          -- high bits of the final byte must not carry into the next row.
+          indexed = VS.fromList [0x0000AA00, 0, 0x00005500, 0x00000100]
+          modes = VS.fromList [0x00000100, 0, 0x00000200]
+          transforms = [TransformPredictor 2 modes, TransformColorIndex palette 3]
+          gray v = packARGB 255 v v v
+          expected = VS.fromList $ map gray [0, 1, 1, 2, 2, 3, 3, 4, 4, 1, 1, 2, 2, 1, 0, 1, 0, 5]
+      applyInverseTransforms transforms 9 2 indexed `shouldBe` Right expected
+
+    it "undoes a later predictor at the packed width before expanding rows" $ do
+      let palette = VS.fromList [packARGB 255 10 20 30, packARGB 255 40 50 60]
+          residuals = VS.fromList [0x0000AA00, 0x00005600, 0x0000AB00, 0x0000AC00]
+          transforms = [TransformColorIndex palette 3, TransformPredictor 2 (VS.singleton 0x00000100)]
+          indices = [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1]
+      applyInverseTransforms transforms 9 2 residuals
+        `shouldBe` Right (VS.fromList $ map (palette VS.!) indices)
+
+    it "restores the width of a color transform before color indexing" $ do
+      let color = packARGB 255 10 20 30
+          palette = VS.singleton color
+          coefficients = VS.fromList [0xFF000020, 0xFF000040, 0xFF000000]
+          transforms = [TransformColor 2 coefficients, TransformColorIndex palette 3]
+          expectedRow = replicate 4 (packARGB 255 30 20 30) ++ replicate 4 (packARGB 255 50 20 30) ++ [color]
+      applyInverseTransforms transforms 9 2 (VS.replicate 4 0)
+        `shouldBe` Right (VS.fromList $ expectedRow ++ expectedRow)
+
+    it "supports color indexing between transforms at different widths" $ do
+      let palette = VS.fromList [packARGB 255 10 20 30, packARGB 255 40 50 60]
+          residuals = VS.fromList [0x0000AA00, 0x00005600, 0x0000AB00, 0x0000AC00]
+          transforms = [TransformSubGreen, TransformColorIndex palette 3, TransformPredictor 2 (VS.singleton 0x00000100)]
+          expandedPalette = VS.fromList [packARGB 255 30 20 50, packARGB 255 90 50 110]
+          indices = [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1]
+      applyInverseTransforms transforms 9 2 residuals
+        `shouldBe` Right (VS.fromList $ map (expandedPalette VS.!) indices)
+
+    it "decodes a libwebp-verified file with subtract-green before color indexing" $ do
+      bytes <- B.readFile "test/data/regression/transform-order.webp"
+      case decodeWebP bytes of
+        Right (ImageRGBA8 img) -> do
+          (imageWidth img, imageHeight img) `shouldBe` (1, 1)
+          pixelAt img 0 0 `shouldBe` PixelRGBA8 15 7 16 255
+        Right _ -> expectationFailure "Expected an RGBA image"
+        Left err -> expectationFailure err
 
   describe "Multiple Pixel Processing" $ do
     it "processes 2x2 image" $ do

@@ -5,6 +5,10 @@ description: Encode and decode WebP images using the JuicyPixels image types, im
 license: BSD-3-Clause
 github: ilyakooo0/JuicyPixels-webp
 
+extra-source-files:
+  - test/data/regression/*.webp
+  - test/data/regression/*.md
+
 dependencies:
   - base >= 4.7 && < 5
   - JuicyPixels

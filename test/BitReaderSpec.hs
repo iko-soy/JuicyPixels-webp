@@ -69,6 +69,30 @@ spec = describe "BitReader" $ do
       byte2 `shouldBe` 0x34
 
   describe "Edge Cases" $ do
+    it "distinguishes exact exhaustion from reading past the end" $ do
+      let (_, end) = readBits 8 (initBitReader $ B.singleton 0xFF)
+          (_, pastEnd) = readBit end
+          (_, stillPastEnd) = readBits 0 pastEnd
+      hasReadPastEnd end `shouldBe` False
+      hasReadPastEnd pastEnd `shouldBe` True
+      hasReadPastEnd stillPastEnd `shouldBe` True
+
+    it "records partial reads beyond the input after refilling" $ do
+      let (_, r1) = readBits 32 (initBitReader $ B.replicate 9 0xFF)
+          (_, r2) = readBits 31 r1
+          (bits, r3) = readBits 10 r2
+      bits `shouldBe` 0x1FF
+      hasReadPastEnd r2 `shouldBe` False
+      hasReadPastEnd r3 `shouldBe` True
+
+    it "does not retain underflow from discarded Huffman lookahead" $ do
+      let (_, reader) = readBits 7 (initBitReader $ B.singleton 0x80)
+          (_, peeked) = readBits 8 reader
+          (bit, consumed) = readBit reader
+      hasReadPastEnd peeked `shouldBe` True
+      bit `shouldBe` True
+      hasReadPastEnd consumed `shouldBe` False
+
     it "handles empty input gracefully" $ do
       let bs = B.empty
           reader = initBitReader bs
