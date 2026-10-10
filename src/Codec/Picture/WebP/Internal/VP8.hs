@@ -36,14 +36,16 @@ decodeVP8 bs = do
       mbWidth = (width + 15) `div` 16
       mbHeight = (height + 15) `div` 16
 
-  -- Initialize one decoder per DCT partition
-  -- MB row r reads its coefficients from partition (r mod N)
-  let dctPartitions = vp8DCTPartitions header
-      dctDecoders = case dctPartitions of
-        [] -> V.singleton (initBoolDecoder B.empty) -- Fallback: empty partition
-        ps -> V.fromList (map initBoolDecoder ps)
+  -- MB row r reads coefficients from partition (r mod N). Keep decoder
+  -- initialization lazy: an empty partition is valid when all its MBs skip
+  -- coefficients, and must be rejected before any non-skipped MB uses it.
+  let dctPartitions = case vp8DCTPartitions header of
+        [] -> [B.empty]
+        ps -> ps
+      dctDecoders = V.fromList (map initBoolDecoder dctPartitions)
+      emptyDctPartitions = VU.fromList (map B.null dctPartitions)
       numDctPartitions = V.length dctDecoders
-  let pixelData = runST $ do
+  let pixelDataResult = runST $ do
         -- Allocate YUV buffers
         yBuf <- VSM.replicate (mbWidth * 16 * mbHeight * 16) (128 :: Word8)
         uBuf <- VSM.replicate (mbWidth * 8 * mbHeight * 8) (128 :: Word8)
@@ -78,31 +80,19 @@ decodeVP8 bs = do
         -- Decode all macroblocks with separate decoders for modes and coefficients
         -- NZ state is threaded: left NZ resets to 0 at each row start
         let decodeMacroblocks !mbY !mbX !modeDec !coeffDecs !lY0 !lY1 !lY2 !lY3 !lU0 !lU1 !lV0 !lV1 !lDC !lBM0 !lBM1 !lBM2 !lBM3
-              | mbY >= mbHeight = return (modeDec, coeffDecs)
+              | mbY >= mbHeight = return Nothing
               | mbX >= mbWidth =
                   -- NOTE: the loop filter runs as a separate whole-frame pass
                   -- after all MBs are reconstructed, so intra prediction always
                   -- reads UNFILTERED pixels (RFC 6386 reference decoder behavior)
                   decodeMacroblocks (mbY + 1) 0 modeDec coeffDecs 0 0 0 0 0 0 0 0 0 0 0 0 0
+              | not skip && emptyDctPartitions VU.! partIdx =
+                  return $ Just "Empty VP8 coefficient partition used by a non-skipped macroblock"
               | otherwise = do
-                  -- Read segment ID from partition 0 (if segmentation enabled)
-                  let (!segId, !modeDec0) = case segReadInfo of
-                        Nothing -> (0, modeDec)
-                        Just (sp0, sp1, sp2) -> decodeSegmentId sp0 sp1 sp2 modeDec
-                      !dequantFact = dequantFactorsVec V.! segId
-
-                  -- RFC 6386 §19.3: mb_skip_coeff follows segment_id and precedes Y mode
-                  let (!skip, !modeDecS) =
-                        if vp8SkipEnabled header
-                          then boolRead (vp8ProbSkipFalse header) modeDec0
-                          else (False, modeDec0)
-
-                  -- Read Y mode from partition 0
-                  let (yMode, modeDec1) = boolReadTree kfYModeTree kfYModeProbs modeDecS
-
-                  -- MB row uses DCT partition (row mod N)
-                  let !partIdx = mbY `mod` numDctPartitions
-                      !coeffDec = coeffDecs V.! partIdx
+                  let !dequantFact = dequantFactorsVec V.! segId
+                      -- Do not force an empty partition for a skipped MB.
+                      coeffDec = coeffDecs V.! partIdx
+                      (yMode, modeDec1) = boolReadTree kfYModeTree kfYModeProbs modeDecS
 
                   -- Process macroblock, threading both decoders and NZ state
                   -- RFC 6386 §11.5: Y mode → (if B_PRED: sub-block modes) → UV mode
@@ -302,61 +292,76 @@ decodeVP8 bs = do
                   let !coeffDecs' = coeffDecs V.// [(partIdx, coeffDecAfterMB)]
                   decodeMacroblocks mbY (mbX + 1) modeDecAfterMB coeffDecs' lY0' lY1' lY2' lY3' lU0' lU1' lV0' lV1' lDC' lBM0' lBM1' lBM2' lBM3'
 
-        (_finalModeDec, _finalCoeffDecs) <- decodeMacroblocks 0 0 modeDecoder dctDecoders 0 0 0 0 0 0 0 0 0 0 0 0 0
+              where
+                -- Skip follows the optional segment ID in partition 0.
+                (segId, modeDec0) = case segReadInfo of
+                  Nothing -> (0, modeDec)
+                  Just (sp0, sp1, sp2) -> decodeSegmentId sp0 sp1 sp2 modeDec
+                (skip, modeDecS) =
+                  if vp8SkipEnabled header
+                    then boolRead (vp8ProbSkipFalse header) modeDec0
+                    else (False, modeDec0)
+                partIdx = mbY `mod` numDctPartitions
 
-        -- Whole-frame loop filter pass over the fully reconstructed frame.
-        -- A frame-level filter level of 0 disables filtering entirely
-        -- (libwebp: filter_type_ = (hdr->level_ == 0) ? 0 : ...).
-        when (filterLevel > 0) $ do
-          levels <- VU.freeze mbFilterLevels
-          inners <- VU.freeze mbFilterInner
-          applyLoopFilterFrame
-            filterType
-            (vp8Sharpness header)
-            levels
-            inners
-            yBuf
-            (mbWidth * 16)
-            uBuf
-            (mbWidth * 8)
-            vBuf
-            (mbWidth * 8)
-            mbHeight
-            mbWidth
+        decodeError <- decodeMacroblocks 0 0 modeDecoder dctDecoders 0 0 0 0 0 0 0 0 0 0 0 0 0
 
-        -- Convert YUV to RGB
-        yData <- VS.freeze yBuf
-        uData <- VS.freeze uBuf
-        vData <- VS.freeze vBuf
+        case decodeError of
+          Just err -> return $ Left err
+          Nothing -> do
+            -- Whole-frame loop filter pass over the fully reconstructed frame.
+            -- A frame-level filter level of 0 disables filtering entirely
+            -- (libwebp: filter_type_ = (hdr->level_ == 0) ? 0 : ...).
+            when (filterLevel > 0) $ do
+              levels <- VU.freeze mbFilterLevels
+              inners <- VU.freeze mbFilterInner
+              applyLoopFilterFrame
+                filterType
+                (vp8Sharpness header)
+                levels
+                inners
+                yBuf
+                (mbWidth * 16)
+                uBuf
+                (mbWidth * 8)
+                vBuf
+                (mbWidth * 8)
+                mbHeight
+                mbWidth
 
-        rgbBuf <- VSM.new (width * height * 3)
+            -- Convert YUV to RGB
+            yData <- VS.freeze yBuf
+            uData <- VS.freeze uBuf
+            vData <- VS.freeze vBuf
 
-        forM_ [0 .. height - 1] $ \y ->
-          forM_ [0 .. width - 1] $ \x -> do
-            let !yIdx = y * mbWidth * 16 + x
-                !chromaY = y `shiftR` 1
-                !chromaX = x `shiftR` 1
-                !uIdx = chromaY * mbWidth * 8 + chromaX
-                !vIdx = uIdx
+            rgbBuf <- VSM.new (width * height * 3)
 
-                !yVal = fromIntegral (yData `VS.unsafeIndex` yIdx) :: Int
-                !uVal = fromIntegral (uData `VS.unsafeIndex` uIdx) :: Int
-                !vVal = fromIntegral (vData `VS.unsafeIndex` vIdx) :: Int
+            forM_ [0 .. height - 1] $ \y ->
+              forM_ [0 .. width - 1] $ \x -> do
+                let !yIdx = y * mbWidth * 16 + x
+                    !chromaY = y `shiftR` 1
+                    !chromaX = x `shiftR` 1
+                    !uIdx = chromaY * mbWidth * 8 + chromaX
+                    !vIdx = uIdx
 
-                -- YUV to RGB conversion (BT.601 studio swing, libwebp/libvpx)
-                !c = 298 * (yVal - 16)
-                !r = clamp ((c + 409 * (vVal - 128) + 128) `shiftR` 8)
-                !g = clamp ((c - 100 * (uVal - 128) - 208 * (vVal - 128) + 128) `shiftR` 8)
-                !b = clamp ((c + 516 * (uVal - 128) + 128) `shiftR` 8)
+                    !yVal = fromIntegral (yData `VS.unsafeIndex` yIdx) :: Int
+                    !uVal = fromIntegral (uData `VS.unsafeIndex` uIdx) :: Int
+                    !vVal = fromIntegral (vData `VS.unsafeIndex` vIdx) :: Int
 
-                rgbIdx = (y * width + x) * 3
+                    -- YUV to RGB conversion (BT.601 studio swing, libwebp/libvpx)
+                    !c = 298 * (yVal - 16)
+                    !r = clamp ((c + 409 * (vVal - 128) + 128) `shiftR` 8)
+                    !g = clamp ((c - 100 * (uVal - 128) - 208 * (vVal - 128) + 128) `shiftR` 8)
+                    !b = clamp ((c + 516 * (uVal - 128) + 128) `shiftR` 8)
 
-            VSM.write rgbBuf rgbIdx (fromIntegral r)
-            VSM.write rgbBuf (rgbIdx + 1) (fromIntegral g)
-            VSM.write rgbBuf (rgbIdx + 2) (fromIntegral b)
+                    rgbIdx = (y * width + x) * 3
 
-        VS.freeze rgbBuf
+                VSM.write rgbBuf rgbIdx (fromIntegral r)
+                VSM.write rgbBuf (rgbIdx + 1) (fromIntegral g)
+                VSM.write rgbBuf (rgbIdx + 2) (fromIntegral b)
 
+            Right <$> VS.freeze rgbBuf
+
+  pixelData <- pixelDataResult
   return $ Image width height pixelData
 
 -- | Reconstruct B_PRED macroblock (16 individual 4x4 blocks) with NZ context tracking
@@ -720,26 +725,25 @@ reconstructChroma uvBuf mbY mbX mbStride uvMode decoder coeffProbs dequantFact c
 
 -- | Per-MB loop filter level (RFC 6386 §15.2, keyframe):
 -- start from the frame filter level; if segmentation provides filter
--- strengths, use them (absolute, or as a delta to the frame level),
--- clamped to [0, 63]; if loop filter deltas are enabled, every keyframe
--- MB is INTRA so add the INTRA ref-frame delta (index 0), plus the
--- B_PRED mode delta (index 0) for B_PRED MBs, clamped to [0, 63].
+-- strengths, use them (absolute, or as a delta to the frame level).
+-- If loop filter deltas are enabled, every keyframe MB is INTRA so add
+-- the INTRA ref-frame delta (index 0), plus the B_PRED mode delta
+-- (index 0) for B_PRED MBs. Clamp only the final sum to [0, 63].
 computeMBFilterLevel :: VP8FrameHeader -> Int -> Bool -> Int
-computeMBFilterLevel header segId isBPred = withDeltas
+computeMBFilterLevel header segId isBPred = clamp63 withDeltas
   where
     frameLevel = vp8FilterLevel header
     segLevel = case vp8Segments header of
       Just si
         | segmentEnabled si ->
             let v = segmentFilterStrength si VU.! segId
-             in clamp63 $ if segmentAbsoluteMode si then v else frameLevel + v
+             in if segmentAbsoluteMode si then v else frameLevel + v
       _ -> frameLevel
     withDeltas = case vp8FilterDeltas header of
       Just fd ->
-        clamp63 $
-          segLevel
-            + (fdRefLfDelta fd VU.! 0) -- INTRA_FRAME ref delta
-            + (if isBPred then fdModeLfDelta fd VU.! 0 else 0) -- B_PRED mode delta
+        segLevel
+          + (fdRefLfDelta fd VU.! 0) -- INTRA_FRAME ref delta
+          + (if isBPred then fdModeLfDelta fd VU.! 0 else 0) -- B_PRED mode delta
       Nothing -> segLevel
     clamp63 = max 0 . min 63
 

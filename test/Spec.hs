@@ -11,6 +11,7 @@ import qualified ColorConvertSpec
 import qualified ContainerSpec
 import qualified DCTSpec
 import qualified EdgeCasesSpec
+import qualified EncodeDimensionsSpec
 import qualified GoldenFilesSpec
 import qualified GoldenSpec
 import qualified IDCTSpec
@@ -63,6 +64,7 @@ main = hspec $ parallel $ do
 
   -- Encoding tests
   describe "VP8 Lossy Encoder" VP8EncodeSpec.spec
+  describe "Encoder Dimensions" EncodeDimensionsSpec.spec
 
   -- Roundtrip and integration tests
   describe "Roundtrip Tests" RoundtripSpec.spec

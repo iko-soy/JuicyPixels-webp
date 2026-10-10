@@ -364,39 +364,37 @@ decodeLZ77 width height maybeCache codeGroups maybeEntropyImage reader = runST $
       -- CRITICAL OPTIMIZATION: Batched copy loop with special cases
       copyLoop !pos !dist !len !out !cache !doCache !r
         | len <= 0 = loop pos r
-        | pos >= totalPixels = loop pos r
+        | len > totalPixels - pos =
+            return $ Left $ "Backreference length " ++ show len ++ " exceeds remaining pixels " ++ show (totalPixels - pos)
         | otherwise = do
             let srcPos = pos - dist
             when (srcPos < 0) $
               error $
                 "Invalid back-reference: distance=" ++ show dist ++ " at pos=" ++ show pos
 
-            -- Calculate how many pixels we can actually copy
-            let actualLen = min len (totalPixels - pos)
-
             -- Special case: dist=1 means repeat single pixel (very common for runs)
             if dist == 1
               then do
                 color <- VSM.unsafeRead out srcPos
                 -- Fill with single color
-                forM_ [pos .. pos + actualLen - 1] $ \i ->
+                forM_ [pos .. pos + len - 1] $ \i ->
                   VSM.unsafeWrite out i color
                 -- Only need to insert once for the color cache (it's the same color)
                 when doCache $ insertColorM color cache
-                loop (pos + actualLen) r
+                loop (pos + len) r
               else
-                if dist >= actualLen
+                if dist >= len
                   then do
                     -- Non-overlapping: can use bulk copy
-                    forM_ [0 .. actualLen - 1] $ \i -> do
+                    forM_ [0 .. len - 1] $ \i -> do
                       color <- VSM.unsafeRead out (srcPos + i)
                       VSM.unsafeWrite out (pos + i) color
                       when doCache $ insertColorM color cache
-                    loop (pos + actualLen) r
+                    loop (pos + len) r
                   else do
                     -- Overlapping case: must copy pixel-by-pixel but still use mutable cache
                     let copyOverlapping !i
-                          | i >= actualLen = loop (pos + actualLen) r
+                          | i >= len = loop (pos + len) r
                           | otherwise = do
                               color <- VSM.unsafeRead out (srcPos + i)
                               VSM.unsafeWrite out (pos + i) color

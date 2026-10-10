@@ -12,6 +12,7 @@ import Codec.Picture.Types
 import Codec.Picture.WebP.Internal.AlphaEncode
 import Codec.Picture.WebP.Internal.Encode
 import qualified Codec.Picture.WebP.Internal.VP8.Encode as VP8.Encode
+import Codec.Picture.WebP.Internal.VP8.EncodeHeader (validateVP8Dimensions)
 import Data.Binary.Put
 import Data.Bits
 import qualified Data.ByteString as B
@@ -73,8 +74,9 @@ encodeAnimFrame quality frame =
               alphChunk = makeALPHChunk alphaData
            in alphChunk <> vp8Chunk
         _ -> error "Unsupported image format for animation encoding"
-   in -- Create ANMF chunk containing the frame
-      makeANMFChunk frame imageChunk
+   in -- Validate before RGBA conversion or alpha extraction touches pixel data.
+      validateVP8Dimensions (dynamicMap imageWidth $ frameImage frame) (dynamicMap imageHeight $ frameImage frame)
+        `seq` makeANMFChunk frame imageChunk
 
 -- | Create ANIM chunk
 makeANIMChunk :: Word32 -> Word16 -> B.ByteString

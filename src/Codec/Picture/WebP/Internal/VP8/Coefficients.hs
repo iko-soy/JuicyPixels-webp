@@ -16,7 +16,9 @@ import Data.Word
 -- | Decode DCT coefficients for a 4x4 block using flat probability indexing.
 -- This matches libwebp's GetCoeffsFast exactly: p[0]=EOB, p[1]=zero,
 -- p[2]=is_one, p[3..5]=small values (2-4), p[6..10]=large values (CAT1-6).
--- Returns: (coefficients, has_nonzero, updated decoder)
+-- Returns: (coefficients, context-present flag, updated decoder).
+-- The context flag records whether tokens were decoded past startPos, even
+-- when they were all explicit DCT_0 tokens ending at coefficient 16.
 decodeCoefficients ::
   BoolDecoder ->
   VU.Vector Word8 ->
@@ -27,9 +29,9 @@ decodeCoefficients ::
 decodeCoefficients decoder coeffProbs blockType initialCtx startPos = do
   coeffs <- VSM.replicate 16 0
 
-  let loop !pos !ctx !d !hasNonzero !skipEOB
+  let loop !pos !ctx !d !skipEOB
         | pos >= 16 = do
-            return (coeffs, hasNonzero, d)
+            return (coeffs, pos > startPos, d)
         | otherwise = do
             let !band = coeffBands `VU.unsafeIndex` pos
                 !probIdx = blockType * 264 + band * 33 + ctx * 11
@@ -40,35 +42,35 @@ decodeCoefficients decoder coeffProbs blockType initialCtx startPos = do
                 let (!isNonzero, !d1) = boolRead (coeffProbs `VU.unsafeIndex` (probIdx + 1)) d
                 if not isNonzero
                   then -- DCT_0 (zero): advance to next position
-                    loop (pos + 1) 0 d1 hasNonzero True
+                    loop (pos + 1) 0 d1 True
                   else do
                     -- Nonzero: decode value using p[2..10]
                     let (!value, !d2) = decodeValueFlat coeffProbs probIdx d1
                         !zigzagPos = zigzag `VU.unsafeIndex` pos
                     VSM.unsafeWrite coeffs zigzagPos value
                     let !newCtx = if abs value == 1 then 1 else 2
-                    loop (pos + 1) newCtx d2 True False
+                    loop (pos + 1) newCtx d2 False
               else do
                 -- Normal: check p[0] for EOB
                 let (!notEOB, !d1) = boolRead (coeffProbs `VU.unsafeIndex` probIdx) d
                 if not notEOB
                   then -- EOB: done with this block
-                    return (coeffs, hasNonzero, d1)
+                    return (coeffs, pos > startPos, d1)
                   else do
                     -- Not EOB: check p[1] for zero/nonzero
                     let (!isNonzero, !d2) = boolRead (coeffProbs `VU.unsafeIndex` (probIdx + 1)) d1
                     if not isNonzero
                       then -- DCT_0 (zero): advance with skipEOB
-                        loop (pos + 1) 0 d2 hasNonzero True
+                        loop (pos + 1) 0 d2 True
                       else do
                         -- Nonzero: decode value using p[2..10]
                         let (!value, !d3) = decodeValueFlat coeffProbs probIdx d2
                             !zigzagPos = zigzag `VU.unsafeIndex` pos
                         VSM.unsafeWrite coeffs zigzagPos value
                         let !newCtx = if abs value == 1 then 1 else 2
-                        loop (pos + 1) newCtx d3 True False
+                        loop (pos + 1) newCtx d3 False
 
-  loop startPos initialCtx decoder False False
+  loop startPos initialCtx decoder False
 
 -- | Decode a nonzero coefficient value using flat p[2..10] indices.
 -- Matches libwebp's GetCoeffsFast + GetLargeValue.

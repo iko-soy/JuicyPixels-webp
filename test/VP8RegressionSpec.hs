@@ -35,7 +35,7 @@ spec = describe "VP8 interoperability regressions" $ do
       factors `shouldBe` DequantFactors 4 4 8 8 4 4
 
   -- These fixed bitstreams were independently decoded with libwebp 1.5.0.
-  -- All have neutral chroma and disabled filtering; expected samples are
+  -- All have neutral chroma; expected samples are
   -- reference RGB values, rather than an encode/decode roundtrip oracle.
   describe "Reference bitstreams" $ do
     it "reconstructs QI 5 coefficients with the reference DC scale" $
@@ -54,6 +54,34 @@ spec = describe "VP8 interoperability regressions" $ do
 
     it "clips the complete segmented quantizer index" $
       checkPixels "vp8-segment-quantizer.webp" [((0, 0), 168), ((3, 3), 168)]
+
+    it "allows an empty coefficient partition when the macroblock skips it" $
+      checkPixels "vp8-empty-coefficients.webp" [((0, 0), 130), ((15, 15), 130)]
+
+    it "allows empty coefficients for skipped B_PRED macroblocks" $
+      checkPixels "vp8-empty-bpred-coefficients.webp" [((0, 0), 130), ((4, 4), 132), ((15, 15), 132)]
+
+    it "rejects an empty partition when a macroblock needs coefficients" $ do
+      bytes <- B.readFile "test/data/regression/vp8-missing-coefficients.webp"
+      fmap (const ()) (decodeWebP bytes)
+        `shouldBe` Left "Empty VP8 coefficient partition used by a non-skipped macroblock"
+
+    it "clips negative filter levels after applying reference deltas" $
+      checkPixels "vp8-filter-delta-clipping.webp" [((3, 1), 140), ((4, 1), 135), ((3, 3), 140)]
+
+    it "clips high filter levels after applying reference deltas" $
+      checkPixels "vp8-filter-delta-clipping-high.webp" [((4, 1), 222), ((5, 1), 213), ((3, 3), 241), ((4, 4), 212)]
+
+    it "preserves coefficient contexts after a block of explicit zero tokens" $
+      checkPixels
+        "vp8-explicit-zero-context.webp"
+        [ ((0, 0), 130),
+          ((4, 0), 214),
+          ((0, 4), 132),
+          ((4, 4), 173),
+          ((8, 0), 172),
+          ((12, 0), 151)
+        ]
 
 segment :: Bool -> Int -> SegmentInfo
 segment absoluteMode quantizer =

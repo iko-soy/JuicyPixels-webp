@@ -29,12 +29,12 @@ spec = describe "Image Decoding" $ do
 
   describe "VP8 Lossy Decoding" $ do
     it "decodes minimal lossy image" $ do
-      let img = makeMinimalVP8Image 16 16
+      img <- B.readFile "test/data/regression/vp8-empty-coefficients.webp"
       case decodeWebP img of
         Right (ImageRGB8 image) -> do
-          -- VP8 decoder now returns actual dimensions (simplified implementation)
           imageWidth image `shouldBe` 16
           imageHeight image `shouldBe` 16
+          pixelAt image 0 0 `shouldBe` PixelRGB8 130 130 130
         Right _ -> expectationFailure "Expected RGB8 image"
         Left err -> expectationFailure $ "Decode failed: " ++ err
 
@@ -134,42 +134,6 @@ makeVP8LBitstream w h alphaUsed =
       -- Add more data bytes for a complete minimal bitstream
       remainingBytes = replicate 20 0x00
    in B.pack $ [byte0, byte1, byte2, byte3, byte4, byte5] ++ remainingBytes
-
-makeMinimalVP8Image :: Int -> Int -> B.ByteString
-makeMinimalVP8Image w h =
-  let vp8Data = makeVP8Bitstream w h
-      vp8Chunk = makeChunk "VP8 " (B.unpack vp8Data)
-      totalSize = B.length vp8Chunk
-      header =
-        B.pack [82, 73, 70, 70]
-          <> word32ToBytes (fromIntegral totalSize + 4)
-          <> B.pack [87, 69, 66, 80]
-   in header <> vp8Chunk
-
-makeVP8Bitstream :: Int -> Int -> B.ByteString
-makeVP8Bitstream w h =
-  let frameTag = 0x00 -- Key frame
-      version = 0x00
-      showFrame = 0x01
-      byte0 = frameTag .|. (version `shiftL` 1) .|. (showFrame `shiftL` 4)
-
-      partitionLength = 10 :: Word32 -- Dummy partition length
-      byte1 = fromIntegral partitionLength
-      byte2 = fromIntegral (partitionLength `shiftR` 8)
-
-      startCode = [0x9D, 0x01, 0x2A]
-
-      widthCode = fromIntegral w :: Word16
-      byte3 = fromIntegral (widthCode .&. 0xFF)
-      byte4 = fromIntegral ((widthCode `shiftR` 8) .&. 0x3F)
-
-      heightCode = fromIntegral h :: Word16
-      byte5 = fromIntegral (heightCode .&. 0xFF)
-      byte6 = fromIntegral ((heightCode `shiftR` 8) .&. 0x3F)
-
-      -- Add dummy partition data
-      partitionData = replicate 10 0x00
-   in B.pack $ [byte0, byte1, byte2] ++ startCode ++ [byte3, byte4, byte5, byte6] ++ partitionData
 
 makeTruncatedVP8L :: B.ByteString
 makeTruncatedVP8L =

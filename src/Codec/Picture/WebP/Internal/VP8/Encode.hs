@@ -66,6 +66,8 @@ defaultEncodeConfig quality =
 --   [DCT partition: per-MB coefficients]
 encodeVP8 :: Image PixelRGB8 -> Int -> B.ByteString
 encodeVP8 img quality = runST $ do
+  validateVP8Dimensions (imageWidth img) (imageHeight img) `seq` return ()
+
   -- Step 1: Convert RGB to YCbCr
   (yBuf, uBuf, vBuf) <- rgbToYCbCrSharp img
 

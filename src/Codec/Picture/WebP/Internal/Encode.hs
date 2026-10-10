@@ -14,6 +14,7 @@ where
 import Codec.Picture.Types
 import Codec.Picture.WebP.Internal.AlphaEncode
 import qualified Codec.Picture.WebP.Internal.VP8.Encode as VP8.Encode
+import Codec.Picture.WebP.Internal.VP8.EncodeHeader (validateVP8Dimensions)
 import Codec.Picture.WebP.Internal.VP8L.EncodeComplete
 import Data.Binary.Put
 import Data.Bits
@@ -23,6 +24,8 @@ import Data.Word
 
 -- | Encode image as lossless WebP
 -- Uses proper Huffman coding for true lossless compression
+--
+-- Throws an error if the width or height is outside @1..16384@.
 encodeWebPLossless :: Image PixelRGBA8 -> B.ByteString
 encodeWebPLossless img =
   let vp8lData = encodeVP8LComplete img -- Complete encoder with proper Huffman coding
@@ -36,6 +39,8 @@ encodeWebPLossless img =
 --   0-30:   Low quality, small files
 --   31-70:  Medium quality (recommended for web)
 --   71-100: High quality, larger files
+--
+-- Throws an error if the width or height is outside @1..16383@.
 encodeWebPLossy :: Image PixelRGB8 -> Int -> B.ByteString
 encodeWebPLossy img quality =
   let vp8Data = VP8.Encode.encodeVP8 img quality
@@ -113,6 +118,8 @@ makeVP8XChunk width height hasAlpha hasAnim =
    in fourCC <> chunkSize <> payload
 
 -- | Encode RGBA image as lossy WebP with alpha channel
+--
+-- Throws an error if the width or height is outside @1..16383@.
 encodeWebPLossyWithAlpha :: Image PixelRGBA8 -> Int -> B.ByteString
 encodeWebPLossyWithAlpha img quality =
   let width = imageWidth img
@@ -135,4 +142,4 @@ encodeWebPLossyWithAlpha img quality =
       -- Combine chunks in extended format
       allChunks = vp8xChunk <> alphChunk <> vp8Chunk
       totalSize = B.length allChunks
-   in makeRIFFContainer (fromIntegral totalSize) allChunks
+   in validateVP8Dimensions width height `seq` makeRIFFContainer (fromIntegral totalSize) allChunks

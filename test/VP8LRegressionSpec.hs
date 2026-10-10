@@ -34,3 +34,31 @@ spec = describe "VP8L decoder regressions" $ do
     case decodeWebP input of
       Left err -> err `shouldContain` "Distance 1 exceeds position 0"
       Right _ -> expectationFailure "Expected invalid backreference to be rejected"
+
+  it "returns Left for an oversubscribed Huffman tree" $ do
+    input <- B.readFile "test/data/regression/vp8l-oversubscribed.webp"
+    case decodeWebP input of
+      Left err -> err `shouldContain` "Oversubscribed prefix code tree"
+      Right _ -> expectationFailure "Expected an oversubscribed tree to be rejected"
+
+  it "returns Left for an incomplete Huffman tree" $ do
+    input <- B.readFile "test/data/regression/vp8l-incomplete.webp"
+    case decodeWebP input of
+      Left err -> err `shouldContain` "Incomplete prefix code tree"
+      Right _ -> expectationFailure "Expected an incomplete tree to be rejected"
+
+  it "rejects a backreference that extends past the final pixel" $ do
+    input <- B.readFile "test/data/regression/vp8l-copy-overrun.webp"
+    case decodeWebP input of
+      Left err -> err `shouldContain` "Backreference length 2 exceeds remaining pixels 1"
+      Right _ -> expectationFailure "Expected an overlong backreference to be rejected"
+
+  it "accepts a backreference that ends exactly at the final pixel" $ do
+    input <- B.readFile "test/data/regression/vp8l-copy-exact.webp"
+    case decodeWebP input of
+      Right (ImageRGBA8 image) -> do
+        imageWidth image `shouldBe` 3
+        imageHeight image `shouldBe` 1
+        VS.toList (imageData image) `shouldBe` concat (replicate 3 [0, 0, 0, 255])
+      Left err -> expectationFailure err
+      Right _ -> expectationFailure "Expected RGBA output"

@@ -9,6 +9,10 @@ Tests use fixed expected values rather than an encoder/decoder round trip.
 | `vp8l-invalid-backref.webp` | The first green symbol is length code 256, with distance 1 and no preceding pixel | Rejected |
 | `vp8l-truncated-pixels.webp` | 100×1 header and a two-symbol green tree, with the pixel data omitted | Rejected |
 | `transform-order.webp` | Subtract-green followed by color-indexing, with one palette entry `(8,7,9,255)` | 1×1 RGBA `(15,7,16,255)` |
+| `vp8l-oversubscribed.webp` | Green Huffman lengths `[1,1,1,1,15]` exceed the available code space | Rejected |
+| `vp8l-incomplete.webp` | Green Huffman lengths `[2,2]` leave unused codes; pixel data selects `11` | Rejected |
+| `vp8l-copy-overrun.webp` | 2×1 header, one literal followed by a length-2 backreference at distance 1 | Rejected |
+| `vp8l-copy-exact.webp` | The same literal and backreference with a 3×1 header | Three opaque black pixels |
 
 The truncation tests also append enough zero bits to the same Huffman tables
 to verify that a complete stream succeeds, and remove the five-byte VP8L
