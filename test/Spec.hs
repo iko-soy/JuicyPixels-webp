@@ -11,6 +11,7 @@ import qualified ColorConvertSpec
 import qualified ContainerSpec
 import qualified DCTSpec
 import qualified EdgeCasesSpec
+import qualified EncodeDimensionsSpec
 import qualified GoldenFilesSpec
 import qualified GoldenSpec
 import qualified IDCTSpec
@@ -28,7 +29,10 @@ import qualified SpecComplianceSpec
 import qualified StressSpec
 import Test.Hspec
 import qualified TransformSpec
+import qualified TruncationSpec
 import qualified VP8EncodeSpec
+import qualified VP8LRegressionSpec
+import qualified VP8RegressionSpec
 
 main :: IO ()
 main = hspec $ parallel $ do
@@ -45,9 +49,12 @@ main = hspec $ parallel $ do
   describe "IDCT" IDCTSpec.spec
   describe "LoopFilter" LoopFilterSpec.spec
   describe "ColorConvert" ColorConvertSpec.spec
+  describe "VP8 Regressions" VP8RegressionSpec.spec
 
   -- VP8L (lossless) component tests
   describe "VP8L Transforms" TransformSpec.spec
+  describe "VP8L Regressions" VP8LRegressionSpec.spec
+  describe "Truncation" TruncationSpec.spec
 
   -- Decoding tests
   describe "Image Decoding" ImageDecodingSpec.spec
@@ -57,6 +64,7 @@ main = hspec $ parallel $ do
 
   -- Encoding tests
   describe "VP8 Lossy Encoder" VP8EncodeSpec.spec
+  describe "Encoder Dimensions" EncodeDimensionsSpec.spec
 
   -- Roundtrip and integration tests
   describe "Roundtrip Tests" RoundtripSpec.spec

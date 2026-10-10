@@ -3,6 +3,7 @@
 module Codec.Picture.WebP.Internal.VP8.EncodeHeader
   ( generateUncompressedHeader,
     generateCompressedHeader,
+    validateVP8Dimensions,
   )
 where
 
@@ -15,6 +16,13 @@ import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Vector.Unboxed as VU
 import Data.Word
+
+-- | Reject dimensions that cannot be represented by the VP8 frame header.
+validateVP8Dimensions :: Int -> Int -> ()
+validateVP8Dimensions width height
+  | width < 1 || width > 16383 || height < 1 || height > 16383 =
+      error $ "VP8 encoding requires width and height in [1, 16383], got " ++ show width ++ "x" ++ show height
+  | otherwise = ()
 
 -- | Generate uncompressed VP8 frame header (10 bytes)
 -- Returns the header bytes
@@ -64,7 +72,7 @@ generateUncompressedHeader width height firstPartSize =
       dimensions = BL.toStrict $ runPut $ do
         putWord16le widthAndScale
         putWord16le heightAndScale
-   in frameTag <> startCode <> dimensions
+   in validateVP8Dimensions width height `seq` frameTag <> startCode <> dimensions
 
 -- | Generate compressed VP8 frame header
 -- Returns the encoded boolean data

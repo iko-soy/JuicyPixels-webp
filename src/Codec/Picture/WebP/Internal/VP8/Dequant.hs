@@ -80,14 +80,14 @@ computeSegmentDequant qi maybeSegInfo segment =
                     else baseQi + delta
             else baseQi
 
-      clampedQi = max 0 (min 127 segmentQi)
-
-      ydc = computeQuantizer clampedQi (qiYdcDelta qi) dcQLookup
-      yac = computeQuantizer clampedQi 0 acQLookup
-      y2dc = computeQuantizer clampedQi (qiY2dcDelta qi) dcQLookup
-      y2ac = computeQuantizer clampedQi (qiY2acDelta qi) acQLookup
-      uvdc = computeQuantizer clampedQi (qiUvdcDelta qi) dcQLookup
-      uvac = computeQuantizer clampedQi (qiUvacDelta qi) acQLookup
+      -- Clip only after adding each component's delta: segmentQi itself
+      -- may be outside [0, 127], with a component delta bringing it back.
+      ydc = computeQuantizer segmentQi (qiYdcDelta qi) dcQLookup
+      yac = computeQuantizer segmentQi 0 acQLookup
+      y2dc = computeQuantizer segmentQi (qiY2dcDelta qi) dcQLookup
+      y2ac = computeQuantizer segmentQi (qiY2acDelta qi) acQLookup
+      uvdc = computeQuantizer segmentQi (qiUvdcDelta qi) dcQLookup
+      uvac = computeQuantizer segmentQi (qiUvacDelta qi) acQLookup
 
       y2dcAdjusted = y2dc * 2
       y2acAdjusted = max 8 ((y2ac * 155) `div` 100)

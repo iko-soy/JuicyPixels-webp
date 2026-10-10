@@ -596,7 +596,7 @@ avg >>= 3;
 fill_block_4x4(avg);
 ```
 
-Edge cases: if top-only available, average of 4 above pixels. If left-only, average of 4 left pixels. If neither, fill with 128.
+Always include all eight samples, using 127 for pixels above the frame and 129 for pixels left of the frame. Thus the top-left subblock predicts 128. The available-edge averaging rules for 16x16 and 8x8 DC prediction do not apply to B_DC_PRED.
 
 ### B_TM_PRED (mode 1)
 
@@ -798,6 +798,8 @@ static const int16 ac_qlookup[128] = {
 ```
 
 ### Computing Quantizer Values
+
+When segmentation is enabled, `yac_qi` below is the segment's absolute QI or the frame QI plus the segment delta. Do not clamp that intermediate value: apply each component delta first, then clip the complete lookup index to [0, 127].
 
 ```c
 int ydc  = dc_qlookup[clip(yac_qi + ydc_delta,  0, 127)];

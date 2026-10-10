@@ -4,7 +4,9 @@
 module PrefixCodeSpec (spec) where
 
 import Codec.Picture.WebP.Internal.BitReader
+import Codec.Picture.WebP.Internal.BitWriter
 import Codec.Picture.WebP.Internal.VP8L.PrefixCode
+import Control.Monad (forM_)
 import Data.Bits
 import qualified Data.ByteString as B
 import qualified Data.List
@@ -41,14 +43,68 @@ spec = describe "PrefixCode" $ do
       let lengths = VU.fromList [0, 0, 0, 0]
       buildPrefixCode lengths `shouldSatisfy` isLeft
 
+    it "rejects oversubscribed code trees before constructing a table" $ do
+      forM_ [[1, 1, 1], [1, 1, 1, 1, 15]] $ \lengths ->
+        case buildPrefixCode (VU.fromList lengths) of
+          Left err -> err `shouldBe` "Oversubscribed prefix code tree"
+          Right _ -> expectationFailure "Expected an oversubscribed tree to be rejected"
+
+    it "rejects incomplete multi-symbol code trees" $ do
+      forM_ [[2, 2], [8, 8, 8, 8]] $ \lengths ->
+        case buildPrefixCode (VU.fromList lengths) of
+          Left err -> err `shouldBe` "Incomplete prefix code tree"
+          Right _ -> expectationFailure "Expected an incomplete tree to be rejected"
+
+    it "rejects code lengths outside 0..15, including singletons" $ do
+      forM_ [[-1, 1, 1], [16, 1], [-1], [16]] $ \lengths ->
+        buildPrefixCode (VU.fromList lengths) `shouldSatisfy` isLeft
+
+    it "preserves zero-bit singleton codes for every valid nonzero length" $ do
+      forM_ [1 .. 15] $ \len ->
+        case buildPrefixCode (VU.fromList [0, len, 0]) of
+          Right code@(PrefixCodeSingle sym) -> do
+            sym `shouldBe` 1
+            let (decoded, reader) = decodeSymbol code (initBitReader B.empty)
+            decoded `shouldBe` 1
+            getBitPosition reader `shouldBe` 0
+            hasReadPastEnd reader `shouldBe` False
+          _ -> expectationFailure "Expected a zero-bit singleton code"
+
     it "handles mixed length codes" $ do
-      let lengths = VU.fromList [2, 3, 3, 4, 4, 4, 4]
+      let lengths = VU.fromList [1, 3, 3, 4, 4, 4, 4]
       case buildPrefixCode lengths of
         Left _ -> expectationFailure "Should build code"
         Right (PrefixCodeTable _ _) -> return ()
         Right _ -> expectationFailure "Expected table code"
 
   describe "Code Decoding" $ do
+    it "decodes mixed code lengths through the 15-bit limit" $ do
+      -- Complete canonical tree: 0, 10, 110, ..., fourteen 1s then 0/1.
+      -- Decode every symbol together so an incorrect consumed length also fails.
+      let lengths = VU.fromList ([1 .. 14] ++ [15, 15])
+          codewords = [(len, (1 `shiftL` len) - 2) | len <- [1 .. 15]] ++ [(15, 32767)]
+          writer = foldl (\w (len, value) -> writeBitsReversed len value w) emptyBitWriter codewords
+          reader = initBitReader $ bitWriterToByteString $ finalizeBitWriter writer
+          check _ r [] = getBitPosition r `shouldBe` sum (map fst codewords)
+          check code r (expected : rest) = do
+            let (actual, r') = decodeSymbol code r
+            actual `shouldBe` expected
+            check code r' rest
+      case buildPrefixCode lengths of
+        Left err -> expectationFailure err
+        Right code -> check code reader [0 .. 15]
+
+    it "decodes all 9-bit codes across multiple secondary tables" $ do
+      -- With 512 equally long codes, each symbol is its canonical code value.
+      case buildPrefixCode (VU.replicate 512 9) of
+        Left err -> expectationFailure err
+        Right code -> forM_ [0 .. 511] $ \expected -> do
+          let writer = writeBitsReversed 9 expected emptyBitWriter
+              reader = initBitReader $ bitWriterToByteString $ finalizeBitWriter writer
+              (actual, reader') = decodeSymbol code reader
+          actual `shouldBe` fromIntegral expected
+          getBitPosition reader' `shouldBe` 9
+
     it "decodes single-symbol code" $ do
       let lengths = VU.fromList [0, 0, 5, 0]
           bs = B.pack [0xFF]
@@ -87,6 +143,14 @@ spec = describe "PrefixCode" $ do
         Left err -> expectationFailure $ "Build failed: " ++ err
 
   describe "Code Length Reading" $ do
+    it "rejects an oversubscribed code-length alphabet" $ do
+      let header = writeBits 4 0 $ writeBit False emptyBitWriter
+          writer = foldl (\w _ -> writeBits 3 1 w) header [1 .. 4 :: Int]
+          reader = initBitReader $ bitWriterToByteString $ finalizeBitWriter writer
+      case readCodeLengths 256 reader of
+        Left err -> err `shouldContain` "Oversubscribed prefix code tree"
+        Right _ -> expectationFailure "Expected the invalid code-length tree to be rejected"
+
     it "reads simple code (1 symbol)" $ do
       -- Simple code: 1 bit set (1 symbol), 8 bits for symbol
       let bs = B.pack [0b00000001, 0x05] -- simple=1, num=0 (1 symbol), symbol=5
@@ -124,8 +188,8 @@ spec = describe "PrefixCode" $ do
       all (\i -> i `elem` values) [0 .. 18] `shouldBe` True
 
   describe "Edge Cases" $ do
-    it "handles reasonable code lengths" $ do
-      let lengths = VU.fromList [8, 8, 8, 8]
+    it "handles a complete 8-bit code" $ do
+      let lengths = VU.replicate 256 8
       case buildPrefixCode lengths of
         Right _ -> return ()
         Left _ -> expectationFailure "Should handle reasonable codes"

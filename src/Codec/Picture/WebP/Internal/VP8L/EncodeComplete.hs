@@ -118,7 +118,9 @@ encodeVP8LComplete img =
           |> writeHuffmanCode (cDist codes) 40 -- Distance: 40 symbols
           |> encodeTokens reverseDistMap tokens codes
           |> finalizeBitWriter
-   in bitWriterToByteString w
+   in if width < 1 || width > 16384 || height < 1 || height > 16384
+        then error $ "VP8L encoding requires width and height in [1, 16384], got " ++ show width ++ "x" ++ show height
+        else bitWriterToByteString w
   where
     (|>) = flip ($)
 

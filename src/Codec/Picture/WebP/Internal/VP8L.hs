@@ -171,9 +171,10 @@ decodeVP8LImageData width height reader _transforms = do
   (prefixCodeGroups, entropyImage, reader4) <-
     if usesMetaPrefixCodes
       then do
-        let (prefixBits, r1) = readBits 3 reader3
-            entropyWidth = (width + (1 `shiftL` fromIntegral prefixBits) - 1) `shiftR` fromIntegral prefixBits
-            entropyHeight = (height + (1 `shiftL` fromIntegral prefixBits) - 1) `shiftR` fromIntegral prefixBits
+        let (prefixBitsRaw, r1) = readBits 3 reader3
+            prefixBits = fromIntegral prefixBitsRaw + 2
+            entropyWidth = (width + (1 `shiftL` prefixBits) - 1) `shiftR` prefixBits
+            entropyHeight = (height + (1 `shiftL` prefixBits) - 1) `shiftR` prefixBits
 
         (entropyImg, r2) <- decodeSubresolutionImage entropyWidth entropyHeight r1
 
@@ -181,7 +182,7 @@ decodeVP8LImageData width height reader _transforms = do
 
         (groupList, finalReader) <- readMultiplePrefixCodeGroups numGroups maybeCache r2
 
-        return (groupList, Just (entropyImg, fromIntegral prefixBits), finalReader)
+        return (groupList, Just (entropyImg, prefixBits), finalReader)
       else do
         (group, r) <- readPrefixCodeGroup reader3 maybeCache
         return ([group], Nothing, r)

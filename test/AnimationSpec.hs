@@ -4,6 +4,8 @@ module AnimationSpec (spec) where
 
 import Codec.Picture
 import Codec.Picture.WebP
+import Codec.Picture.WebP.Internal.AnimationEncode (AnimationFrame (..), makeANIMChunk, makeANMFChunk)
+import Codec.Picture.WebP.Internal.Encode (makeRIFFContainer, makeVP8LChunk, makeVP8XChunk)
 import qualified Data.ByteString as B
 import Test.Hspec
 import Test.QuickCheck
@@ -226,6 +228,56 @@ spec = describe "Animation" $ do
           imageHeight (head composited) `shouldBe` 16
         Left err -> expectationFailure $ "Composited decode failed: " ++ err
 
+    it "keeps translucent white white when frames overlap" $ do
+      let white = PixelRGBA8 255 255 255 128
+          encoded = animationData [losslessFrame white False, losslessFrame white True]
+
+      fmap (map (\img -> pixelAt img 0 0)) (decodeWebPAnimationComposited encoded)
+        `shouldBe` Right [white, PixelRGBA8 255 255 255 191]
+
+    it "uses unrounded alpha weights for translucent colors" $ do
+      let blue = PixelRGBA8 0 0 255 128
+          red = PixelRGBA8 255 0 0 128
+          encoded = animationData [losslessFrame blue False, losslessFrame red True]
+
+      fmap (map (\img -> pixelAt img 0 0)) (decodeWebPAnimationComposited encoded)
+        `shouldBe` Right [blue, PixelRGBA8 170 0 84 191]
+
+    it "preserves a translucent destination under a transparent frame" $ do
+      let destination = PixelRGBA8 23 147 255 1
+          transparent = PixelRGBA8 255 0 0 0
+          encoded = animationData [losslessFrame destination False, losslessFrame transparent True]
+
+      fmap (map (\img -> pixelAt img 0 0)) (decodeWebPAnimationComposited encoded)
+        `shouldBe` Right [destination, destination]
+
+    it "preserves source colors over a transparent canvas" $ do
+      let source = PixelRGBA8 23 147 255 128
+          encoded = animationData [losslessFrame source True]
+
+      fmap (map (\img -> pixelAt img 0 0)) (decodeWebPAnimationComposited encoded)
+        `shouldBe` Right [source]
+
+    it "clears RGB when both blended pixels are transparent" $ do
+      let encoded = animationData [losslessFrame (PixelRGBA8 255 147 23 0) True]
+
+      fmap (map (\img -> pixelAt img 0 0)) (decodeWebPAnimationComposited encoded)
+        `shouldBe` Right [PixelRGBA8 0 0 0 0]
+
+    it "reports a corrupt frame instead of returning an empty animation" $ do
+      let encoded = animationData [frameChunk False (makeVP8LChunk $ B.singleton 0)]
+
+      fmap length (decodeWebPAnimationComposited encoded)
+        `shouldBe` Left "Invalid VP8L signature: 0"
+
+    it "reports corrupt frames between valid frames" $ do
+      let valid = losslessFrame (PixelRGBA8 255 255 255 128) True
+          corrupt = frameChunk False (makeVP8LChunk $ B.singleton 0)
+          encoded = animationData [valid, corrupt, valid]
+
+      fmap length (decodeWebPAnimationComposited encoded)
+        `shouldBe` Left "Invalid VP8L signature: 0"
+
   describe "File Format" $ do
     it "produces valid RIFF container" $ do
       let frame = WebPEncodeFrame (ImageRGB8 $ generateImage (\_ _ -> PixelRGB8 255 0 0) 16 16) 100 0 0
@@ -269,6 +321,23 @@ spec = describe "Animation" $ do
         Left err -> expectationFailure $ "Decode failed: " ++ err
 
 -- Helper functions
+-- Lossless one-pixel frames isolate compositing from lossy color conversion.
+losslessFrame :: PixelRGBA8 -> Bool -> B.ByteString
+losslessFrame pixel blend =
+  let img = generateImage (\_ _ -> pixel) 1 1
+   in frameChunk blend (B.drop 12 $ encodeWebPLossless img)
+
+frameChunk :: Bool -> B.ByteString -> B.ByteString
+frameChunk blend imageChunk =
+  let img = generateImage (\_ _ -> PixelRGBA8 0 0 0 0) 1 1
+      frame = AnimationFrame (ImageRGBA8 img) 100 0 0 blend False
+   in makeANMFChunk frame imageChunk
+
+animationData :: [B.ByteString] -> B.ByteString
+animationData frames =
+  let body = makeVP8XChunk 1 1 True True <> makeANIMChunk 0 0 <> mconcat frames
+   in makeRIFFContainer (fromIntegral $ B.length body) body
+
 dynamicImageWidth :: DynamicImage -> Int
 dynamicImageWidth (ImageRGB8 img) = imageWidth img
 dynamicImageWidth (ImageRGBA8 img) = imageWidth img

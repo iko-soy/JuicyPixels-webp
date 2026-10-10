@@ -12,6 +12,27 @@ homepage:       https://github.com/ilyakooo0/JuicyPixels-webp#readme
 bug-reports:    https://github.com/ilyakooo0/JuicyPixels-webp/issues
 license:        BSD-3-Clause
 build-type:     Simple
+extra-source-files:
+    test/data/regression/transform-order.webp
+    test/data/regression/vp8-b-dc-borders.webp
+    test/data/regression/vp8-empty-bpred-coefficients.webp
+    test/data/regression/vp8-empty-coefficients.webp
+    test/data/regression/vp8-explicit-zero-context.webp
+    test/data/regression/vp8-filter-delta-clipping-high.webp
+    test/data/regression/vp8-filter-delta-clipping.webp
+    test/data/regression/vp8-missing-coefficients.webp
+    test/data/regression/vp8-quantizer.webp
+    test/data/regression/vp8-segment-quantizer.webp
+    test/data/regression/vp8l-copy-exact.webp
+    test/data/regression/vp8l-copy-overrun.webp
+    test/data/regression/vp8l-incomplete.webp
+    test/data/regression/vp8l-invalid-backref.webp
+    test/data/regression/vp8l-long-code.webp
+    test/data/regression/vp8l-meta-prefix.webp
+    test/data/regression/vp8l-oversubscribed.webp
+    test/data/regression/vp8l-truncated-pixels.webp
+    test/data/regression/vp8-fixtures.md
+    test/data/regression/vp8l-fixtures.md
 
 source-repository head
   type: git
@@ -89,6 +110,7 @@ test-suite JuicyPixels-webp-test
       ContainerSpec
       DCTSpec
       EdgeCasesSpec
+      EncodeDimensionsSpec
       GoldenFilesSpec
       GoldenSpec
       IDCTSpec
@@ -105,7 +127,10 @@ test-suite JuicyPixels-webp-test
       SpecComplianceSpec
       StressSpec
       TransformSpec
+      TruncationSpec
       VP8EncodeSpec
+      VP8LRegressionSpec
+      VP8RegressionSpec
       Paths_JuicyPixels_webp
   autogen-modules:
       Paths_JuicyPixels_webp

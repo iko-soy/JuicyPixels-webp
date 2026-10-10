@@ -256,6 +256,8 @@ decodeLZ77 ::
   Maybe (VS.Vector Word32, Int) ->
   BitReader ->
   Either String (VS.Vector Word32, BitReader)
+decodeLZ77 _ _ _ _ _ reader
+  | hasReadPastEnd reader = Left "Unexpected end of VP8L bitstream"
 decodeLZ77 width height maybeCache codeGroups maybeEntropyImage reader = runST $ do
   when (width <= 0 || width > 16384 || height <= 0 || height > 16384) $
     error $
@@ -276,6 +278,7 @@ decodeLZ77 width height maybeCache codeGroups maybeEntropyImage reader = runST $
   let !numGroups = V.length codeGroups
 
   let loop !pos !r
+        | hasReadPastEnd r = return $ Left "Unexpected end of VP8L bitstream"
         | pos >= totalPixels = do
             result <- VS.unsafeFreeze output
             return $ Right (result, r)
@@ -345,11 +348,9 @@ decodeLZ77 width height maybeCache codeGroups maybeEntropyImage reader = runST $
                            in max 1 (xi + yi * width)
                         else distCode - 120
 
-                when (dist > pos) $
-                  error $
-                    "Distance " ++ show dist ++ " exceeds position " ++ show pos
-
-                copyLoop pos dist len output mutableCache useCache r4
+                if dist > pos
+                  then return $ Left $ "Distance " ++ show dist ++ " exceeds position " ++ show pos
+                  else copyLoop pos dist len output mutableCache useCache r4
               else do
                 let cacheIdx = fromIntegral greenSym - 280
                 if not useCache
@@ -363,39 +364,37 @@ decodeLZ77 width height maybeCache codeGroups maybeEntropyImage reader = runST $
       -- CRITICAL OPTIMIZATION: Batched copy loop with special cases
       copyLoop !pos !dist !len !out !cache !doCache !r
         | len <= 0 = loop pos r
-        | pos >= totalPixels = loop pos r
+        | len > totalPixels - pos =
+            return $ Left $ "Backreference length " ++ show len ++ " exceeds remaining pixels " ++ show (totalPixels - pos)
         | otherwise = do
             let srcPos = pos - dist
             when (srcPos < 0) $
               error $
                 "Invalid back-reference: distance=" ++ show dist ++ " at pos=" ++ show pos
 
-            -- Calculate how many pixels we can actually copy
-            let actualLen = min len (totalPixels - pos)
-
             -- Special case: dist=1 means repeat single pixel (very common for runs)
             if dist == 1
               then do
                 color <- VSM.unsafeRead out srcPos
                 -- Fill with single color
-                forM_ [pos .. pos + actualLen - 1] $ \i ->
+                forM_ [pos .. pos + len - 1] $ \i ->
                   VSM.unsafeWrite out i color
                 -- Only need to insert once for the color cache (it's the same color)
                 when doCache $ insertColorM color cache
-                loop (pos + actualLen) r
+                loop (pos + len) r
               else
-                if dist >= actualLen
+                if dist >= len
                   then do
                     -- Non-overlapping: can use bulk copy
-                    forM_ [0 .. actualLen - 1] $ \i -> do
+                    forM_ [0 .. len - 1] $ \i -> do
                       color <- VSM.unsafeRead out (srcPos + i)
                       VSM.unsafeWrite out (pos + i) color
                       when doCache $ insertColorM color cache
-                    loop (pos + actualLen) r
+                    loop (pos + len) r
                   else do
                     -- Overlapping case: must copy pixel-by-pixel but still use mutable cache
                     let copyOverlapping !i
-                          | i >= actualLen = loop (pos + actualLen) r
+                          | i >= len = loop (pos + len) r
                           | otherwise = do
                               color <- VSM.unsafeRead out (srcPos + i)
                               VSM.unsafeWrite out (pos + i) color

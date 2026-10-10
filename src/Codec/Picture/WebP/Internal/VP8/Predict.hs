@@ -166,28 +166,12 @@ predict8x8TM output stride x y = do
 
 predict4x4DC :: VSM.MVector s Word8 -> Int -> Int -> Int -> ST s ()
 predict4x4DC output stride x y = do
-  let topAvailable = y > 0
-      leftAvailable = x > 0
-
-  sum <-
-    if topAvailable && leftAvailable
-      then do
-        topSum <- sumRow output stride (x, y - 1) 4
-        leftSum <- sumCol output stride (x - 1, y) 4
-        return $ (topSum + leftSum + 4) `shiftR` 3
-      else
-        if topAvailable
-          then do
-            topSum <- sumRow output stride (x, y - 1) 4
-            return $ (topSum + 2) `shiftR` 2
-          else
-            if leftAvailable
-              then do
-                leftSum <- sumCol output stride (x - 1, y) 4
-                return $ (leftSum + 2) `shiftR` 2
-              else return 128
-
-  fillBlock output stride (x, y) 4 4 sum
+  -- B_DC_PRED always averages all eight neighbors. At frame boundaries,
+  -- readPixel supplies the synthetic top (127) and left (129) samples.
+  -- The available-neighbor rules for 16x16/8x8 DC prediction do not apply.
+  topSum <- sumRow output stride (x, y - 1) 4
+  leftSum <- sumCol output stride (x - 1, y) 4
+  fillBlock output stride (x, y) 4 4 ((topSum + leftSum + 4) `shiftR` 3)
 
 predict4x4TM :: VSM.MVector s Word8 -> Int -> Int -> Int -> ST s ()
 predict4x4TM output stride x y = do

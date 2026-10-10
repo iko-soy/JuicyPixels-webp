@@ -1,6 +1,17 @@
 # Test Suite Notes
 
-## Current Test Status: 421 tests, all passing
+## Codec interoperability regressions
+
+The decoder regressions in `VP8RegressionSpec`, `VP8LRegressionSpec`,
+`TruncationSpec`, `TransformSpec`, and `AnimationSpec` cover reference quantizer
+scales, prediction borders, segmented quantizer clipping, long Huffman codes,
+spatial Huffman groups, transform ordering, input exhaustion, invalid
+backreferences, alpha blending, and propagation of frame errors. Fixed fixtures
+under `test/data/regression/` were checked with libwebp; their expected pixels
+do not depend on this library's encoder. Component tests also cover 15-bit
+Huffman codes, packed row boundaries, and speculative bit-reader lookahead.
+
+## Current Test Status: 470 tests, all passing
 
 ### Known Test Limitations
 

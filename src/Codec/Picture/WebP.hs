@@ -38,6 +38,9 @@ data WebPEncodeFrame = WebPEncodeFrame
   }
 
 -- | Encode animation to WebP
+--
+-- Frames are encoded with the lossy VP8 codec. Throws an error if any frame's
+-- width or height is outside @1..16383@.
 encodeWebPAnimation ::
   [WebPEncodeFrame] -> -- Frames to encode
   Int ->

@@ -3147,109 +3147,273 @@ coeffUpdateProbs =
       255
     ]
 
--- | DC quantizer lookup table (128 entries)
+-- | DC quantizer lookup table (RFC 6386, Section 14.1).
 dcQLookup :: VU.Vector Word16
-dcQLookup = VU.generate 128 $ \q ->
-  if q < 4
-    then [4, 5, 6, 7] !! q
-    else
-      if q < 8
-        then 8
-        else
-          if q < 12
-            then 9
-            else
-              if q < 16
-                then 10
-                else
-                  if q < 20
-                    then 11
-                    else
-                      if q < 24
-                        then 12
-                        else
-                          if q < 28
-                            then 13
-                            else
-                              if q < 32
-                                then 14
-                                else
-                                  if q < 36
-                                    then 15
-                                    else
-                                      if q < 40
-                                        then 16
-                                        else
-                                          if q < 44
-                                            then 17
-                                            else
-                                              if q < 48
-                                                then 18
-                                                else
-                                                  if q < 52
-                                                    then 19
-                                                    else
-                                                      if q < 56
-                                                        then 20
-                                                        else
-                                                          if q < 60
-                                                            then 21
-                                                            else
-                                                              if q < 64
-                                                                then 22
-                                                                else
-                                                                  if q < 68
-                                                                    then 23
-                                                                    else
-                                                                      if q < 72
-                                                                        then 24
-                                                                        else
-                                                                          if q < 76
-                                                                            then 25
-                                                                            else
-                                                                              if q < 80
-                                                                                then 26
-                                                                                else
-                                                                                  if q < 84
-                                                                                    then 27
-                                                                                    else
-                                                                                      if q < 88
-                                                                                        then 28
-                                                                                        else
-                                                                                          if q < 92
-                                                                                            then 29
-                                                                                            else
-                                                                                              if q < 96
-                                                                                                then 30
-                                                                                                else
-                                                                                                  if q < 100
-                                                                                                    then 31
-                                                                                                    else
-                                                                                                      if q < 104
-                                                                                                        then 32
-                                                                                                        else
-                                                                                                          if q < 108
-                                                                                                            then 33
-                                                                                                            else
-                                                                                                              if q < 112
-                                                                                                                then 34
-                                                                                                                else
-                                                                                                                  if q < 116
-                                                                                                                    then 35
-                                                                                                                    else
-                                                                                                                      if q < 120
-                                                                                                                        then 36
-                                                                                                                        else
-                                                                                                                          if q < 124
-                                                                                                                            then 37
-                                                                                                                            else 38
+dcQLookup =
+  VU.fromList
+    [ 4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      17,
+      18,
+      19,
+      20,
+      20,
+      21,
+      21,
+      22,
+      22,
+      23,
+      23,
+      24,
+      25,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31,
+      32,
+      33,
+      34,
+      35,
+      36,
+      37,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      46,
+      46,
+      47,
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55,
+      56,
+      57,
+      58,
+      59,
+      60,
+      61,
+      62,
+      63,
+      64,
+      65,
+      66,
+      67,
+      68,
+      69,
+      70,
+      71,
+      72,
+      73,
+      74,
+      75,
+      76,
+      76,
+      77,
+      78,
+      79,
+      80,
+      81,
+      82,
+      83,
+      84,
+      85,
+      86,
+      87,
+      88,
+      89,
+      91,
+      93,
+      95,
+      96,
+      98,
+      100,
+      101,
+      102,
+      104,
+      106,
+      108,
+      110,
+      112,
+      114,
+      116,
+      118,
+      122,
+      124,
+      126,
+      128,
+      130,
+      132,
+      134,
+      136,
+      138,
+      140,
+      143,
+      145,
+      148,
+      151,
+      154,
+      157
+    ]
 
--- | AC quantizer lookup table (128 entries)
+-- | AC quantizer lookup table (RFC 6386, Section 14.1).
 acQLookup :: VU.Vector Word16
-acQLookup = VU.generate 128 $ \q ->
-  if q < 4
-    then [4, 5, 6, 7] !! q
-    else 2 * fromIntegral q
+acQLookup =
+  VU.fromList
+    [ 4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31,
+      32,
+      33,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      46,
+      47,
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55,
+      56,
+      57,
+      58,
+      60,
+      62,
+      64,
+      66,
+      68,
+      70,
+      72,
+      74,
+      76,
+      78,
+      80,
+      82,
+      84,
+      86,
+      88,
+      90,
+      92,
+      94,
+      96,
+      98,
+      100,
+      102,
+      104,
+      106,
+      108,
+      110,
+      112,
+      114,
+      116,
+      119,
+      122,
+      125,
+      128,
+      131,
+      134,
+      137,
+      140,
+      143,
+      146,
+      149,
+      152,
+      155,
+      158,
+      161,
+      164,
+      167,
+      170,
+      173,
+      177,
+      181,
+      185,
+      189,
+      193,
+      197,
+      201,
+      205,
+      209,
+      213,
+      217,
+      221,
+      225,
+      229,
+      234,
+      239,
+      245,
+      249,
+      254,
+      259,
+      264,
+      269,
+      274,
+      279,
+      284
+    ]
 
 -- | Zigzag scan order (16 entries)
 zigzag :: VU.Vector Int

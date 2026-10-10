@@ -5,6 +5,7 @@ module Codec.Picture.WebP.Internal.BitReader
     initBitReader,
     readBits,
     readBit,
+    hasReadPastEnd,
     getBytesRemaining,
     getBitPosition,
     getReaderState,
@@ -22,7 +23,8 @@ data BitReader = BitReader
   { brBytes :: !B.ByteString,
     brOffset :: !Int,
     brBits :: !Word64,
-    brCount :: !Int
+    brCount :: !Int,
+    brReadPastEnd :: !Bool
   }
   deriving (Show)
 
@@ -31,16 +33,18 @@ data BitReader = BitReader
 {-# INLINE initBitReader #-}
 initBitReader :: B.ByteString -> BitReader
 initBitReader bs =
-  let reader = BitReader bs 0 0 0
+  let reader = BitReader bs 0 0 0 False
    in refillBufferFull reader
 
 -- | Read n bits (n <= 32) from the bitstream
 -- Returns the bits as Word32 and the updated reader
 -- Bits are returned LSB-first: the first bit read is at position 0
--- If not enough bits are available, returns 0s for missing bits
+-- Missing bits are zero-padded for Huffman lookahead, but the returned reader
+-- records the underflow. Discarding a speculative reader does not consume bits
+-- or mark the original reader as having read past the end.
 {-# INLINE readBits #-}
 readBits :: Int -> BitReader -> (Word32, BitReader)
-readBits !n reader@(BitReader bytes offset bits count)
+readBits !n reader@(BitReader bytes offset bits count pastEnd)
   | n == 0 = (0, reader)
   | count >= n =
       -- Fast path: enough bits in buffer
@@ -48,48 +52,54 @@ readBits !n reader@(BitReader bytes offset bits count)
           !result = fromIntegral (bits .&. mask)
           !newBits = bits `shiftR` n
           !newCount = count - n
-       in (result, BitReader bytes offset newBits newCount)
+       in (result, BitReader bytes offset newBits newCount pastEnd)
   | otherwise =
       -- Need to refill
-      let !reader'@(BitReader _ _ _ count') = refillBufferFull reader
+      let !reader'@(BitReader _ _ _ count' _) = refillBufferFull reader
        in if count' >= n
             then readBits n reader'
             else
               -- Can't refill enough, return what we have padded with zeros
               let !mask = (1 `shiftL` count') - 1
                   !result = fromIntegral (brBits reader' .&. mask)
-               in (result, BitReader bytes (brOffset reader') 0 0)
+               in (result, BitReader bytes (brOffset reader') 0 0 True)
 
 -- | Read a single bit from the bitstream (specialized fast path)
 {-# INLINE readBit #-}
 readBit :: BitReader -> (Bool, BitReader)
-readBit reader@(BitReader bytes offset bits count)
+readBit reader@(BitReader bytes offset bits count pastEnd)
   | count >= 1 =
       -- Fast path: have at least 1 bit
       let !result = (bits .&. 1) == 1
           !newBits = bits `shiftR` 1
           !newCount = count - 1
-       in (result, BitReader bytes offset newBits newCount)
+       in (result, BitReader bytes offset newBits newCount pastEnd)
   | otherwise =
       -- Need to refill first
       let !reader' = refillBufferFull reader
           (val, reader'') = readBits 1 reader'
        in (val /= 0, reader'')
 
+-- | Whether any consumed read required bits beyond the input.
+-- This remains true after subsequent reads, including reads of zero bits.
+{-# INLINE hasReadPastEnd #-}
+hasReadPastEnd :: BitReader -> Bool
+hasReadPastEnd = brReadPastEnd
+
 -- | Get remaining bytes in the reader (for debugging)
 getBytesRemaining :: BitReader -> Int
-getBytesRemaining (BitReader bytes offset _ _) =
+getBytesRemaining (BitReader bytes offset _ _ _) =
   B.length bytes - offset
 
 -- | Get approximate bit position (for debugging)
 -- Returns the number of bits consumed from the start
 getBitPosition :: BitReader -> Int
-getBitPosition (BitReader _ offset _ count) =
+getBitPosition (BitReader _ offset _ count _) =
   offset * 8 - count
 
 -- | Get reader state as a string (for debugging)
 getReaderState :: BitReader -> String
-getReaderState (BitReader _ offset bits count) =
+getReaderState (BitReader _ offset bits count pastEnd) =
   "offset="
     ++ show offset
     ++ ", bits=0x"
@@ -98,6 +108,8 @@ getReaderState (BitReader _ offset bits count) =
     ++ show count
     ++ ", pos="
     ++ show (offset * 8 - count)
+    ++ ", pastEnd="
+    ++ show pastEnd
   where
     showHex64 :: Word64 -> String
     showHex64 w = concatMap toHexDigit [60, 56 .. 0]
@@ -109,7 +121,7 @@ getReaderState (BitReader _ offset bits count) =
 -- Uses batch byte reading for efficiency
 {-# INLINE refillBuffer #-}
 refillBuffer :: BitReader -> BitReader
-refillBuffer reader@(BitReader bytes offset bits count)
+refillBuffer reader@(BitReader bytes offset bits count pastEnd)
   | count >= 32 = reader
   | offset >= B.length bytes = reader
   | otherwise =
@@ -125,14 +137,14 @@ refillBuffer reader@(BitReader bytes offset bits count)
                   !newCount = count + (bytesToRead `shiftL` 3)
                   -- \* 8
                   !newOffset = offset + bytesToRead
-               in BitReader bytes newOffset newBits newCount
+               in BitReader bytes newOffset newBits newCount pastEnd
             else reader
 
 -- | Aggressively refill the buffer to 56+ bits for optimal performance
 -- Called at initialization and when buffer runs low
 {-# INLINE refillBufferFull #-}
 refillBufferFull :: BitReader -> BitReader
-refillBufferFull reader@(BitReader bytes offset bits count)
+refillBufferFull reader@(BitReader bytes offset bits count pastEnd)
   | count >= 56 = reader
   | offset >= B.length bytes = reader
   | otherwise =
@@ -146,7 +158,7 @@ refillBufferFull reader@(BitReader bytes offset bits count)
                   !newBits = bits .|. (newBytes `shiftL` count)
                   !newCount = count + (bytesToRead `shiftL` 3)
                   !newOffset = offset + bytesToRead
-                  !reader' = BitReader bytes newOffset newBits newCount
+                  !reader' = BitReader bytes newOffset newBits newCount pastEnd
                in if newCount < 56 && newOffset < B.length bytes
                     then refillBufferFull reader'
                     else reader'

@@ -36,16 +36,23 @@ kCodeLengthCodeOrder =
 buildPrefixCode :: VU.Vector Int -> Either String PrefixCode
 buildPrefixCode codeLengths
   | VU.null codeLengths = Left "Empty code lengths"
+  | VU.any (\len -> len < 0 || len > 15) codeLengths = Left "Code length outside the range 0..15"
   | otherwise =
       let numSymbols = VU.length codeLengths
           nonZeroCount = VU.foldl' (\acc len -> if len > 0 then acc + 1 else acc) 0 codeLengths
+          -- Measure the Kraft sum in units of 2^-15. Multiple-symbol trees
+          -- must fill the code space exactly; a singleton uses no input bits.
+          codeSpace = VU.foldl' (\acc len -> if len > 0 then acc + (1 `shiftL` (15 - len)) else acc) (0 :: Int) codeLengths
        in case nonZeroCount of
             0 ->
               Left $ "No symbols with non-zero code length (alphabet size: " ++ show numSymbols ++ ")"
             1 ->
               let symbol = VU.head $ VU.filter (\i -> codeLengths VU.! i > 0) (VU.enumFromN 0 numSymbols)
                in Right $ PrefixCodeSingle (fromIntegral symbol)
-            _ -> buildPrefixCodeTable codeLengths
+            _
+              | codeSpace > 32768 -> Left "Oversubscribed prefix code tree"
+              | codeSpace < 32768 -> Left "Incomplete prefix code tree"
+              | otherwise -> buildPrefixCodeTable codeLengths
 
 -- | Build a two-level lookup table for prefix code decoding
 -- This implementation closely follows libwebp's BuildHuffmanTable algorithm
@@ -151,7 +158,10 @@ buildPrefixCodeTable codeLengths = runST $ do
         code <- VUM.read nextCode len
         VUM.write nextCode len (code + 1)
 
-        let shortCode = code .&. ((1 `shiftL` primaryBits) - 1)
+        -- Canonical codes are read most-significant bit first. The primary
+        -- lookup therefore uses the leading bits before reversing for the
+        -- LSB-first bit reader.
+        let shortCode = code `shiftR` (len - primaryBits)
             revShort = reverseBits shortCode primaryBits
 
         -- Check if we need a new secondary table
@@ -217,8 +227,8 @@ buildPrefixCodeTable codeLengths = runST $ do
                   return (totalBits, offset)
 
         -- Fill secondary table entry
-        let longPart = code `shiftR` primaryBits
-            longBits = len - primaryBits
+        let longBits = len - primaryBits
+            longPart = code .&. ((1 `shiftL` longBits) - 1)
             revLong = reverseBits longPart longBits
             actualSecondaryBits = secondaryTableBits - primaryBits
 
@@ -244,24 +254,6 @@ buildPrefixCodeTable codeLengths = runST $ do
 
   -- Determine actual table size used
   actualSize <- VUM.read nextTablePos 0
-
-  -- Fill any remaining invalid entries in primary table with first valid symbol
-  -- This handles incomplete Huffman trees gracefully
-  firstSymIdx <- VUM.read symbolIdx 0
-  when (firstSymIdx > 0) $ do
-    firstSym <- VUM.read sorted 0
-    let defaultEntry = packEntry firstSym 0 -- 0-bit code (will return immediately)
-    forM_ [0 .. primarySize - 1] $ \i -> do
-      entry <- VUM.read table i
-      when (entry == invalidEntry) $
-        VUM.write table i defaultEntry
-
-  -- Also fill secondary tables
-  forM_ [primarySize .. actualSize - 1] $ \i -> do
-    entry <- VUM.read table i
-    when (entry == invalidEntry) $ do
-      firstSym <- VUM.read sorted 0
-      VUM.write table i (packEntry firstSym 0)
 
   -- Freeze and truncate to actual size
   frozenTable <- VU.unsafeFreeze table
