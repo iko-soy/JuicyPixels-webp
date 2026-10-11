@@ -64,3 +64,12 @@ four columns black. The expected output was checked against the RFC's
 `vp8_dixie_walsh` C function and libwebp's `WebPDecodeYUV`: each image row has
 four white pixels, four gray-130 pixels, four black pixels, and four gray-130
 pixels.
+
+`vp8-two-partitions.webp` contains the same 16×16 grayscale pixels as
+`vp8-quantizer.webp`, with an 8-byte first partition and two coefficient
+partitions. The first coefficient partition has five bytes and is used by the
+single macroblock row; the second is a single unused zero byte. Expected gray
+values are 214 at `(0,0)`, 172 at `(4,0)`, and 158 at `(15,15)`, independently
+checked with libwebp on both the RIFF file and raw VP8 payload. The regression
+test also removes the unused byte and rebuilds the container, verifying that
+an empty partition which no macroblock reads is accepted.

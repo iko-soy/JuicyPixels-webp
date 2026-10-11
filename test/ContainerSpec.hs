@@ -6,6 +6,8 @@ import Codec.Picture (convertRGBA8)
 import Codec.Picture.Types (DynamicImage (..), PixelRGB8 (..), PixelRGBA8 (..), generateImage, pixelAt)
 import Codec.Picture.WebP (WebPAnimFrame (..), decodeWebP, decodeWebPAnimation, decodeWebPAnimationComposited, decodeWebPFirstFrame, encodeWebPLossless, encodeWebPLossy)
 import Codec.Picture.WebP.Internal.Container
+import qualified Codec.Picture.WebP.Internal.Encode as Encode
+import Control.Exception (evaluate)
 import Control.Monad (forM_)
 import Data.Bits
 import qualified Data.ByteString as B
@@ -38,6 +40,11 @@ spec = describe "Container" $ do
     it "ignores data after the declared RIFF size" $ do
       let complete = encodeWebPLossless $ generateImage (\_ _ -> PixelRGBA8 12 34 56 255) 1 1
       fmap (const ()) (decodeWebP (complete <> "trailing data")) `shouldBe` Right ()
+
+    it "does not use trailing bytes to complete a chunk inside RIFF" $ do
+      let chunk = makeVP8LChunk [0x2F, 0, 0, 0, 0]
+          webp = makeRIFFHeader "WEBP" (fromIntegral $ B.length chunk - 2) <> chunk
+      parseWebP webp `shouldSatisfy` isLeft
   describe "Simple VP8L Format" $ do
     it "parses simple VP8L structure" $ do
       let vp8lChunk = makeVP8LChunk [0x2F, 0, 0, 0, 0, 0, 0, 0]
@@ -67,6 +74,30 @@ spec = describe "Container" $ do
         Left err -> expectationFailure $ "Parse failed: " ++ err
 
   describe "Extended VP8X Format" $ do
+    forM_ [[0xAB], [0xAB, 0xCD]] $ \extra ->
+      it ("ignores " ++ show (length extra) ++ " future VP8X bytes and preserves the next chunk") $ do
+        let headerPayload = [0, 0, 0, 0] ++ word24ToBytes 2 ++ word24ToBytes 4
+            imagePayload = B.pack [0x2F, 0, 0, 0, 0]
+            chunks = makeChunk "VP8X" (headerPayload ++ extra) <> makeVP8LChunk (B.unpack imagePayload)
+            webp = makeRIFFHeader "WEBP" (fromIntegral $ B.length chunks) <> chunks
+        parseWebP webp
+          `shouldBe` Right (WebPExtended (VP8XHeader False False 3 5) [ChunkVP8L imagePayload])
+
+    it "rejects a VP8X payload shorter than its mandatory fields" $ do
+      let chunk = makeChunk "VP8X" (replicate 9 0)
+          webp = makeRIFFHeader "WEBP" (fromIntegral $ B.length chunk) <> chunk
+      parseWebP webp `shouldBe` Left "VP8X chunk size must be at least 10"
+
+    it "rejects missing future VP8X bytes within the declared chunk" $ do
+      let chunk = "VP8X" <> word32ToBytes 12 <> B.replicate 10 0
+          webp = makeRIFFHeader "WEBP" (fromIntegral $ B.length chunk) <> chunk
+      parseWebP webp `shouldSatisfy` isLeft
+
+    it "requires padding after an odd-sized VP8X payload" $ do
+      let chunk = "VP8X" <> word32ToBytes 11 <> B.replicate 11 0
+          webp = makeRIFFHeader "WEBP" (fromIntegral $ B.length chunk) <> chunk
+      parseWebP webp `shouldSatisfy` isLeft
+
     it "rejects canvas areas above the unsigned 32-bit limit" $ do
       let vp8xChunk = makeVP8XChunk 0x00 65535 65535
           webp = makeRIFFHeader "WEBP" (fromIntegral $ B.length vp8xChunk) <> vp8xChunk
@@ -118,6 +149,17 @@ spec = describe "Container" $ do
         Right (WebPExtended _ chunks) -> do
           length chunks `shouldBe` 1
         other -> expectationFailure $ "Unexpected result: " ++ show other
+
+  describe "Canvas encoding limits" $ do
+    forM_ [(1, 1), (16777216, 1), (1, 16777216), (65535, 65537)] $ \(width, height) ->
+      it ("preserves valid canvas dimensions " ++ show (width, height)) $ do
+        let chunk = Encode.makeVP8XChunk width height False False
+            webp = makeRIFFHeader "WEBP" (fromIntegral $ B.length chunk) <> chunk
+        parseWebP webp `shouldBe` Right (WebPExtended (VP8XHeader False False width height) [])
+
+    forM_ [(0, 1), (1, 0), (-1, 1), (1, -1), (16777217, 1), (1, 16777217), (maxBound, maxBound), (65536, 65536)] $ \(width, height) ->
+      it ("rejects invalid canvas dimensions " ++ show (width, height)) $
+        evaluate (B.length $ Encode.makeVP8XChunk width height False False) `shouldThrow` anyErrorCall
 
   describe "Still-image animation flag" $ do
     let pixel = PixelRGBA8 12 34 56 255

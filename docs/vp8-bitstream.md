@@ -38,6 +38,10 @@ Byte 2:      first_part_size bits [18:11]
 
 `first_part_size` is a 19-bit little-endian value (bits 5-23 of the 3-byte tag) giving the size of the first data partition in bytes.
 
+The first partition must be nonempty and fit within the VP8 payload after the
+10-byte key-frame header. Coefficient partition size entries must also fit
+within the remaining payload; RIFF padding is not part of a VP8 partition.
+
 For WebP, `frame_type` MUST be 0 (key frame).
 
 ### Bytes 3-9: Key Frame Header (key frames only)
@@ -81,6 +85,13 @@ int vscale = hs >> 14;
 ## Boolean Arithmetic Decoder (Range Coder)
 
 VP8 uses a boolean arithmetic coder (range coder) for all compressed data.
+
+Keep an exhaustion flag when a boolean read needs a byte beyond its partition.
+Returning zero bits after that point can keep the arithmetic defined, but the
+frame must be rejected. Do not flag a final normalization merely for leaving
+the buffered-bit count negative: exhaustion occurs only if another read needs
+missing input. Check both the mode and coefficient partitions. An empty
+coefficient partition is permitted when no non-skipped macroblock reads it.
 
 ### State
 
@@ -225,6 +236,15 @@ if (segmentation_enabled) {
     }
 }
 ```
+
+**Key-frame initialization:** initialize segment quantizers and filter strengths
+to zero, with `segment_feature_mode = 1` (absolute values). This matters when
+segmentation is enabled but `update_data = 0`: the segment QI and filter level
+are zero rather than the frame's values. This follows libwebp's
+[`ResetSegmentHeader`](https://github.com/webmproject/libwebp/blob/main/src/dec/vp8_dec.c).
+RFC 6386 Section 19.2's sample decoder instead zero-initializes the mode, and
+Section 9.3 does not specify the initial value. As with the reversed mode-bit
+description above, this WebP implementation follows libwebp for compatibility.
 
 ### Loop Filter Parameters
 

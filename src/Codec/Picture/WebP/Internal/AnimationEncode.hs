@@ -79,9 +79,9 @@ validateAnimation frames canvasWidth canvasHeight
        in validateVP8Dimensions width height `seq`
             if x < 0 || y < 0 || odd x || odd y
               then error "Animation encoding requires nonnegative, even frame offsets"
-              else
-                -- Subtract the bounded frame dimensions rather than adding
-                -- untrusted offsets, which could overflow Int.
+              else -- Subtract the bounded frame dimensions rather than adding
+              -- untrusted offsets, which could overflow Int.
+
                 if x > canvasWidth - width || y > canvasHeight - height
                   then error "Animation frame exceeds canvas bounds"
                   else
@@ -120,6 +120,7 @@ makeANIMChunk bgColor loopCount =
    in fourCC <> chunkSize <> payload <> padding
 
 -- | Create ANMF chunk for a single frame
+-- Throws an error if any frame field cannot be represented without truncation.
 makeANMFChunk :: AnimationFrame -> B.ByteString -> B.ByteString
 makeANMFChunk frame imageData =
   let fourCC = B.pack [65, 78, 77, 70] -- "ANMF"
@@ -175,4 +176,20 @@ makeANMFChunk frame imageData =
       payload = header <> imageData
       chunkSize = BL.toStrict $ runPut $ putWord32le (fromIntegral $ B.length payload)
       padding = if odd (B.length payload) then B.singleton 0 else B.empty
-   in fourCC <> chunkSize <> payload <> padding
+   in validateANMFMetadata frame `seq` fourCC <> chunkSize <> payload <> padding
+
+validateANMFMetadata :: AnimationFrame -> ()
+validateANMFMetadata frame
+  | x < 0 || y < 0 || x > 33554430 || y > 33554430 || odd x || odd y =
+      error "ANMF coordinates must be even and in [0, 33554430]"
+  | width < 1 || height < 1 || width > 16777216 || height > 16777216 =
+      error "ANMF dimensions must be in [1, 16777216]"
+  | duration < 0 || duration > 16777215 =
+      error "ANMF duration must be in [0, 16777215] milliseconds"
+  | otherwise = ()
+  where
+    x = frameX frame
+    y = frameY frame
+    width = dynamicMap imageWidth $ frameImage frame
+    height = dynamicMap imageHeight $ frameImage frame
+    duration = frameDuration frame

@@ -13,6 +13,7 @@ where
 
 import Codec.Picture.Types
 import Codec.Picture.WebP.Internal.AlphaEncode
+import Codec.Picture.WebP.Internal.Container (validateVP8XDimensions)
 import qualified Codec.Picture.WebP.Internal.VP8.Encode as VP8.Encode
 import Codec.Picture.WebP.Internal.VP8.EncodeHeader (validateVP8Dimensions)
 import Codec.Picture.WebP.Internal.VP8L.EncodeComplete
@@ -75,7 +76,7 @@ makeVP8Chunk vp8Data =
    in fourCC <> chunkSize <> vp8Data <> padding
 
 -- | Create VP8X chunk (extended format header)
--- Canvas dimensions are clamped to the valid range [1, 2^24]
+-- Throws for dimensions outside [1, 2^24] or an area above 2^32 - 1.
 makeVP8XChunk ::
   Int ->
   Int -> -- Width, height
@@ -101,9 +102,8 @@ makeVP8XChunk width height hasAlpha hasAnim =
       reserved = B.pack [0, 0, 0]
 
       -- Canvas dimensions (24 bits each, minus 1)
-      clampDim d = min (bit 24) (max 1 d)
-      width24 = fromIntegral (clampDim width - 1) :: Word32
-      height24 = fromIntegral (clampDim height - 1) :: Word32
+      width24 = fromIntegral (width - 1) :: Word32
+      height24 = fromIntegral (height - 1) :: Word32
 
       widthBytes = BL.toStrict $ runPut $ do
         putWord8 (fromIntegral $ width24 .&. 0xFF)
@@ -116,7 +116,7 @@ makeVP8XChunk width height hasAlpha hasAnim =
         putWord8 (fromIntegral $ (height24 `shiftR` 16) .&. 0xFF)
 
       payload = B.singleton flags <> reserved <> widthBytes <> heightBytes
-   in fourCC <> chunkSize <> payload
+   in either error (const $ fourCC <> chunkSize <> payload) (validateVP8XDimensions width height)
 
 -- | Encode RGBA image as lossy WebP with alpha channel
 --

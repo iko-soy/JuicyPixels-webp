@@ -43,6 +43,13 @@ controls allow metadata and unknown chunks between reconstruction chunks,
 reset alpha/bitstream ordering for each animation frame, and keep ignoring
 ANIM chunks when the animation flag is unset.
 
+Boundary regressions also preserve future VP8X fields and their RIFF padding,
+reject unrepresentable VP8X and ANMF metadata before serialization, and reject
+empty encoded VP8 first partitions. Animation checks cover declared frame
+rectangles and overflow-safe canvas limits while retaining valid differences
+between ANMF and bitstream dimensions. Boolean-decoder tests cover empty input
+and an unused empty coefficient partition in a multi-partition frame.
+
 ## Full-suite validation
 
 Run all functional, property, quality, and stress tests with:
