@@ -16,9 +16,9 @@ spec = do
       forM_ [8, 16] $ \size ->
         forM_ [0 .. 3] $ \mode ->
           forM_ [(x, y) | x <- [0, size, size * 2], y <- [0, size, size * 2]] $ \(x, y) ->
-            forM_ [0, 1, 2] $ \pattern -> do
+            forM_ [0, 1, 2] $ \pixelPattern -> do
               let stride = size * 3
-                  pixels = VS.generate (stride * stride) $ \i -> case pattern :: Int of
+                  pixels = VS.generate (stride * stride) $ \i -> case pixelPattern :: Int of
                     0 -> fromIntegral ((i * 37 + i `div` stride * 71) `mod` 256)
                     1 -> if even (i + i `div` stride) then 0 else 255
                     _ -> 128

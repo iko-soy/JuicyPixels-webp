@@ -128,9 +128,9 @@ buildPrefixCodeTable codeLengths = runST $ do
     VUM.write nextCode len code
     count <- VUM.read blCount len
     let newCode = (code + count) `shiftL` 1
-    when (newCode < 0 || newCode > 100000)
-      $ error
-      $ "Code overflow at length " ++ show len ++ ": code=" ++ show code ++ ", count=" ++ show count ++ ", newCode=" ++ show newCode
+    when (newCode < 0 || newCode > 100000) $
+      error $
+        "Code overflow at length " ++ show len ++ ": code=" ++ show code ++ ", count=" ++ show count ++ ", newCode=" ++ show newCode
     VUM.write codeAcc 0 newCode
 
   -- Step 5: Fill primary table (codes with length <= primaryBits)
@@ -186,9 +186,9 @@ buildPrefixCodeTable codeLengths = runST $ do
             then do
               -- Calculate size needed for this secondary table
               tableBits <- calculateSecondaryTableBits blCount len primaryBits maxCodeLength
-              when (tableBits < 0 || tableBits > 10)
-                $ error
-                $ "Invalid tableBits: " ++ show tableBits
+              when (tableBits < 0 || tableBits > 10) $
+                error $
+                  "Invalid tableBits: " ++ show tableBits
               let tableSize = 1 `shiftL` tableBits
 
               offset <- VUM.read nextTablePos 0
@@ -206,9 +206,9 @@ buildPrefixCodeTable codeLengths = runST $ do
 
                   -- Calculate size needed for this secondary table
                   tableBits <- calculateSecondaryTableBits blCount len primaryBits maxCodeLength
-                  when (tableBits < 0 || tableBits > 10)
-                    $ error
-                    $ "Invalid tableBits: " ++ show tableBits
+                  when (tableBits < 0 || tableBits > 10) $
+                    error $
+                      "Invalid tableBits: " ++ show tableBits
                   let tableSize = 1 `shiftL` tableBits
 
                   offset <- VUM.read nextTablePos 0
@@ -233,9 +233,9 @@ buildPrefixCodeTable codeLengths = runST $ do
                   -- Existing secondary table pointer
                   let totalBits = existingLen
                       offset = existingSymbol
-                  when (totalBits <= primaryBits || totalBits > 20)
-                    $ error
-                    $ "Invalid totalBits from existing entry: " ++ show totalBits ++ " (should be > " ++ show primaryBits ++ ", existing=0x" ++ showHex existing ++ ")"
+                  when (totalBits <= primaryBits || totalBits > 20) $
+                    error $
+                      "Invalid totalBits from existing entry: " ++ show totalBits ++ " (should be > " ++ show primaryBits ++ ", existing=0x" ++ showHex existing ++ ")"
                   return (totalBits, offset)
 
         -- Fill secondary table entry
@@ -255,9 +255,9 @@ buildPrefixCodeTable codeLengths = runST $ do
           let replicateCount = 1 `shiftL` (actualSecondaryBits - longBits)
               entry = packEntry sym longBits
 
-          when (replicateCount < 0 || replicateCount > 10000)
-            $ error
-            $ "Invalid replicateCount: " ++ show replicateCount
+          when (replicateCount < 0 || replicateCount > 10000) $
+            error $
+              "Invalid replicateCount: " ++ show replicateCount
 
           -- Replicate entry for all bit patterns with this prefix
           forM_ [0 .. (replicateCount - 1)] $ \i -> do
@@ -390,9 +390,9 @@ readSymbolCodeLengths alphabetSize codeLengthCode reader = do
             lengthNbits = 2 + 2 * fromIntegral lengthNbits1
             (maxSym1, reader1b) = readBits lengthNbits reader1a
             maxSym = 2 + fromIntegral maxSym1
-        when (maxSym > alphabetSize)
-          $ Left
-          $ "max_symbol " ++ show maxSym ++ " exceeds alphabet size " ++ show alphabetSize
+        when (maxSym > alphabetSize) $
+          Left $
+            "max_symbol " ++ show maxSym ++ " exceeds alphabet size " ++ show alphabetSize
         return (maxSym, reader1b)
   runST $ do
     lengths <- VUM.replicate alphabetSize 0
