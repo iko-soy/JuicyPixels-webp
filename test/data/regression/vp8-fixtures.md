@@ -51,3 +51,16 @@ reconstructed luma value is 136 (RGB 140).
 Every shortened fixture has its RIFF, chunk, and first-partition sizes adjusted
 to the bytes actually stored. The rejected files therefore exercise boolean
 reader exhaustion rather than the declared partition-length bounds checks.
+
+`vp8-wht-pass-order.webp` is an independently constructed 118-byte, 16×16
+keyframe with QI 0, DC luma/chroma prediction, neutral chroma, and filtering
+disabled. Its only nonzero quantized coefficients are +2048 at raster
+positions 1 and 2 of the Y2 block (zigzag positions 1 and 5). Dequantization
+produces +16384 at both positions. RFC 6386 sections 14.3 and 20.8 apply the
+column WHT pass first, then the row pass with division by eight, producing
+`[4096, 0, -4096, 0]` in each row of the transformed Y2 block. Reversing the
+passes prematurely wraps the row sum +32768 to -32768 and turns the first
+four columns black. The expected output was checked against the RFC's
+`vp8_dixie_walsh` C function and libwebp's `WebPDecodeYUV`: each image row has
+four white pixels, four gray-130 pixels, four black pixels, and four gray-130
+pixels.

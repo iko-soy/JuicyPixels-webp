@@ -38,6 +38,17 @@ spec = describe "VP8 interoperability regressions" $ do
   -- All have neutral chroma; expected samples are
   -- reference RGB values, rather than an encode/decode roundtrip oracle.
   describe "Reference bitstreams" $ do
+    it "reconstructs Y2 coefficients in the reference WHT pass order" $
+      checkPixels
+        "vp8-wht-pass-order.webp"
+        [ ((0, 0), 255),
+          ((3, 3), 255),
+          ((4, 0), 130),
+          ((8, 0), 0),
+          ((12, 0), 130),
+          ((0, 15), 255)
+        ]
+
     it "reconstructs QI 5 coefficients with the reference DC scale" $
       checkPixels "vp8-quantizer.webp" [((0, 0), 214), ((3, 3), 214)]
 

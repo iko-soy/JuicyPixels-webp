@@ -63,6 +63,7 @@ encodeAnimation frames canvasWidth canvasHeight bgColor loopCount quality =
 -- | Validate all metadata before converting or encoding any frame pixels.
 validateAnimation :: [AnimationFrame] -> Int -> Int -> ()
 validateAnimation frames canvasWidth canvasHeight
+  | null frames = error "Animation encoding requires at least one frame"
   | canvasWidth < 1 || canvasWidth > 16777216 || canvasHeight < 1 || canvasHeight > 16777216 =
       error $ "Animation encoding requires canvas width and height in [1, 16777216], got " ++ show canvasWidth ++ "x" ++ show canvasHeight
   | toInteger canvasWidth * toInteger canvasHeight > 4294967295 =

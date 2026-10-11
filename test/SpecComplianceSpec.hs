@@ -5,7 +5,8 @@ module SpecComplianceSpec (spec) where
 import Codec.Picture
 import Codec.Picture.WebP
 import Codec.Picture.WebP.Internal.Container
-import Data.Bits ((.&.))
+import Control.Monad (forM_)
+import Data.Bits (clearBit, shiftL, (.&.), (.|.))
 import qualified Data.ByteString as B
 import Data.Word
 import Test.Hspec
@@ -70,6 +71,34 @@ spec = describe "Spec Compliance" $ do
       B.index encoded (20 + tagSize) `shouldBe` 0x9D
       B.index encoded (21 + tagSize) `shouldBe` 0x01
       B.index encoded (22 + tagSize) `shouldBe` 0x2A
+
+  describe "VP8 uncompressed header (RFC 6386 Section 9.1)" $
+    beforeAll (B.readFile "test/data/regression/vp8-empty-coefficients.webp") $ do
+      -- Mutate a reference bitstream rather than relying on the encoder.
+      -- libwebp accepts profiles 0-3 and rejects each malformed header below.
+      forM_ [0 .. 3] $ \profile ->
+        it ("accepts supported profile " ++ show profile) $ \valid -> do
+          let encoded = modifyVP8HeaderByte 0 (\b -> (b .&. 0xF1) .|. (profile `shiftL` 1)) valid
+          case decodeWebP encoded of
+            Right (ImageRGB8 dec) -> do
+              (imageWidth dec, imageHeight dec) `shouldBe` (16, 16)
+              imageData dec `shouldBe` imageData (generateImage (\_ _ -> PixelRGB8 130 130 130) 16 16)
+            Left err -> expectationFailure $ "Decode failed: " ++ err
+            Right _ -> expectationFailure "Expected RGB8 image"
+
+      forM_ [4 .. 7] $ \profile ->
+        it ("rejects reserved profile " ++ show profile) $ \valid -> do
+          let encoded = modifyVP8HeaderByte 0 (\b -> (b .&. 0xF1) .|. (profile `shiftL` 1)) valid
+          (() <$ decodeWebP encoded) `shouldBe` Left "Failed to parse uncompressed header: Unsupported VP8 profile"
+
+      it "rejects a frame that is not marked for display" $ \valid -> do
+        let encoded = modifyVP8HeaderByte 0 (`clearBit` 4) valid
+        (() <$ decodeWebP encoded) `shouldBe` Left "Failed to parse uncompressed header: Only displayable VP8 frames are supported"
+
+      forM_ [("width", 6), ("height", 8)] $ \(dimension, offset) ->
+        it ("rejects zero " ++ dimension) $ \valid -> do
+          let encoded = modifyVP8HeaderByte (offset + 1) (.&. 0xC0) $ modifyVP8HeaderByte offset (const 0) valid
+          (() <$ decodeWebP encoded) `shouldBe` Left "Failed to parse uncompressed header: VP8 frame dimensions must be nonzero"
 
   describe "Width/Height Encoding" $ do
     it "VP8L stores width-1 (RFC 9649 Section 4.1)" $ do
@@ -229,6 +258,13 @@ fromWord32LE [a, b, c, d] =
     + fromIntegral c * 65536
     + fromIntegral d * 16777216
 fromWord32LE _ = 0
+
+-- The simple fixture starts its VP8 payload after the 12-byte RIFF header
+-- and the 8-byte chunk header. Preserve every other header and payload byte.
+modifyVP8HeaderByte :: Int -> (Word8 -> Word8) -> B.ByteString -> B.ByteString
+modifyVP8HeaderByte offset f bytes =
+  let index = 20 + offset
+   in B.take index bytes <> B.singleton (f (B.index bytes index)) <> B.drop (index + 1) bytes
 
 -- Hand-packed RFC 9649 stream, independently decoded with Pillow/libwebp.
 -- The 8x5 stream has no transforms/cache and encodes prefix_bits as zero:

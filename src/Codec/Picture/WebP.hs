@@ -19,7 +19,7 @@ where
 
 import Codec.Picture.Types
 import Codec.Picture.WebP.Internal.Alpha (decodeAlpha)
-import Codec.Picture.WebP.Internal.Animation (WebPAnimFrame (..), combineRGBAlpha, decodeAnimFrame, decodeAnimation, decodeAnimationWithCompositing)
+import Codec.Picture.WebP.Internal.Animation (WebPAnimFrame (..), combineRGBAlpha, decodeAnimation, decodeAnimationFirstFrame, decodeAnimationWithCompositing)
 import Codec.Picture.WebP.Internal.AnimationEncode (AnimationFrame (..), encodeAnimation)
 import Codec.Picture.WebP.Internal.Container
 import Codec.Picture.WebP.Internal.Encode (encodeWebPLossless, encodeWebPLossy, encodeWebPLossyWithAlpha)
@@ -39,7 +39,8 @@ data WebPEncodeFrame = WebPEncodeFrame
 
 -- | Encode animation to WebP
 --
--- Frames are encoded with the lossy VP8 codec. Canvas dimensions must be in
+-- At least one frame is required. Frames are encoded with the lossy VP8 codec.
+-- Canvas dimensions must be in
 -- @1..16777216@, with at most @4294967295@ pixels. Frame dimensions must be in
 -- @1..16383@, offsets must be nonnegative and even, and each frame must fit
 -- within the canvas. Durations must be in @0..16777215@ milliseconds.
@@ -101,15 +102,16 @@ decodeWebP bs = do
           img <- decodeVP8L vp8lChunk
           return $ ImageRGBA8 img
 
--- | Decode first frame only (for animated images)
+-- | Decode the first frame without compositing or decoding later frames.
+-- Animated images must contain ANIM and ANMF chunks, and the decoded frame
+-- must fit within the canvas. Nonanimated images are decoded normally.
 decodeWebPFirstFrame :: B.ByteString -> Either String DynamicImage
 decodeWebPFirstFrame bs = do
   webpFile <- parseWebP bs
   case webpFile of
-    WebPExtended header chunks
-      | vp8xHasAnimation header,
-        (anmf : _) <- [(frame, sub) | ChunkANMF frame sub <- chunks] ->
-          webpFrameImage <$> decodeAnimFrame anmf
+    WebPExtended header _
+      | vp8xHasAnimation header ->
+          webpFrameImage <$> decodeAnimationFirstFrame webpFile
     _ -> decodeWebP bs
 
 -- | Decode animation frames

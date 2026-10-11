@@ -24,13 +24,26 @@ first-partition limit and animation canvas geometry, even offsets, and 24-bit
 durations. Boundary controls preserve valid short streams, trailing RIFF data,
 unknown animation subchunks, and the largest representable metadata values.
 
+Further regressions cover the inverse Walsh-Hadamard transform's column-first
+pass order with large Y2 coefficients, reserved VP8 profiles, non-displayable
+frames, and zero frame dimensions. Animation tests require an ANIM header and
+at least one frame, reject empty animation encoding, and check canvas bounds
+across raw, first-frame, and composited decoding. Container tests ensure ANIM
+payloads are ignored when the animation flag is unset while preserving chunk
+framing checks and validation for animated files.
+
 ## Full-suite validation
 
 Run all functional, property, quality, and stress tests with:
 
 ```bash
-stack --no-nix --lock-file read-only -j4 test --ghc-options='-O1 -fignore-interface-pragmas' --test-arguments='--jobs=2 +RTS -N2 -RTS'
+stack --no-nix --lock-file read-only -j4 test --ghc-options='-O1 -fomit-interface-pragmas' --test-arguments='--jobs=2 +RTS -N2 -RTS'
 ```
+
+This retains optimizations from dependencies such as `vector` while limiting
+large function expansions between codec modules. When changing compiler options
+on an existing build, run `stack --no-nix clean` first so older object files are
+not reused.
 
 ### Known Test Limitations
 

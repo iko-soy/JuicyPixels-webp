@@ -2,9 +2,10 @@
 
 module ContainerSpec (spec) where
 
-import Codec.Picture.Types (PixelRGBA8 (..), generateImage)
+import Codec.Picture.Types (DynamicImage (..), PixelRGBA8 (..), generateImage, pixelAt)
 import Codec.Picture.WebP (decodeWebP, encodeWebPLossless)
 import Codec.Picture.WebP.Internal.Container
+import Control.Monad (forM_)
 import Data.Bits
 import qualified Data.ByteString as B
 import Data.Word
@@ -140,6 +141,33 @@ spec = describe "Container" $ do
         Left err -> expectationFailure $ "Parse failed: " ++ err
 
   describe "Animation Chunks" $ do
+    forM_ [([], "empty"), ([0x58], "short"), ([1, 2, 3, 4, 5, 6], "complete")] $ \(payload, label) ->
+      it ("ignores " ++ label ++ " ANIM chunks when the animation flag is unset") $ do
+        let pixel = PixelRGBA8 12 34 56 255
+            imageChunk = B.drop 12 $ encodeWebPLossless $ generateImage (\_ _ -> pixel) 1 1
+            chunks = makeChunk "ANIM" payload <> imageChunk
+            webp = makeExtendedWebP 0x00 chunks
+        case parseWebP webp of
+          Right (WebPExtended _ parsedChunks) -> any isAnimChunk parsedChunks `shouldBe` False
+          other -> expectationFailure $ "Unexpected result: " ++ show other
+        case decodeWebP webp of
+          Right (ImageRGBA8 image) -> pixelAt image 0 0 `shouldBe` pixel
+          Right _ -> expectationFailure "Expected an RGBA image"
+          Left err -> expectationFailure $ "Decode failed: " ++ err
+
+    it "rejects truncated ignored ANIM payloads" $ do
+      let truncatedChunk = B.init $ makeChunk "ANIM" [0, 0]
+      parseWebP (makeExtendedWebP 0x00 truncatedChunk) `shouldSatisfy` isLeft
+
+    it "requires padding after odd-sized ignored ANIM chunks" $ do
+      let unpaddedChunk = B.init $ makeChunk "ANIM" [0]
+      parseWebP (makeExtendedWebP 0x00 unpaddedChunk) `shouldSatisfy` isLeft
+
+    forM_ [0 .. 5] $ \size ->
+      it ("rejects " ++ show size ++ "-byte ANIM payloads when the animation flag is set") $ do
+        let animChunk = makeChunk "ANIM" $ replicate size 0
+        parseWebP (makeExtendedWebP 0x02 animChunk) `shouldSatisfy` isLeft
+
     it "parses ANIM chunk" $ do
       let animChunk = makeChunk "ANIM" [0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00]
           vp8xChunk = makeVP8XChunk 0x02 10 10
@@ -149,6 +177,24 @@ spec = describe "Container" $ do
         Right (WebPExtended _ chunks) -> do
           any isAnimChunk chunks `shouldBe` True
         other -> expectationFailure $ "Unexpected result: " ++ show other
+
+    it "retains the animation header and frame image when the animation flag is set" $ do
+      let imagePayload = [0x2F, 0, 0, 0, 0]
+          imageChunk = makeVP8LChunk imagePayload
+          animChunk = makeChunk "ANIM" [1, 2, 3, 4, 5, 6]
+          frameChunk = makeChunk "ANMF" $ replicate 16 0 ++ B.unpack imageChunk
+      parseWebP (makeExtendedWebP 0x02 (animChunk <> frameChunk))
+        `shouldBe` Right
+          ( WebPExtended
+              (VP8XHeader False True 1 1)
+              [ ChunkANIM (AnimHeader 0x04030201 0x0605),
+                ChunkANMF (AnimFrame 0 0 1 1 0 True False) [ChunkVP8L $ B.pack imagePayload]
+              ]
+          )
+
+    it "does not apply top-level ANIM ignoring to ANMF subchunks" $ do
+      let frameChunk = makeChunk "ANMF" $ replicate 16 0 ++ B.unpack (makeChunk "ANIM" [])
+      parseWebP (makeExtendedWebP 0x00 frameChunk) `shouldSatisfy` isLeft
 
   describe "Error Handling" $ do
     it "reports error for empty input" $ do
@@ -171,6 +217,11 @@ makeRIFFHeader fourCC size =
   B.pack [82, 73, 70, 70] -- "RIFF"
     <> word32ToBytes (size + 4)
     <> fourCC
+
+makeExtendedWebP :: Word8 -> B.ByteString -> B.ByteString
+makeExtendedWebP flags chunks =
+  let body = makeVP8XChunk flags 0 0 <> chunks
+   in makeRIFFHeader "WEBP" (fromIntegral $ B.length body) <> body
 
 makeVP8LChunk :: [Word8] -> B.ByteString
 makeVP8LChunk payload =

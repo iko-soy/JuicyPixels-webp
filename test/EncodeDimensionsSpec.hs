@@ -30,6 +30,10 @@ spec = describe "Encoder dimensions" $ do
         evaluate (B.length $ encodeAnimation $ ImageRGBA8 rgba) `shouldThrow` expected
 
   describe "Animation metadata" $ do
+    it "rejects an empty frame list" $ do
+      evaluate (B.length $ encodeWebPAnimation [] 1 1 80)
+        `shouldThrow` errorCall "Animation encoding requires at least one frame"
+
     forM_ (invalidDimensions 16777216) $ \(width, height) ->
       it ("rejects unrepresentable canvas dimensions " ++ show (width, height)) $ do
         evaluate (B.length $ encodeWebPAnimation [smallFrame 100 0 0] width height 80)

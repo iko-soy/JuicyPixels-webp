@@ -108,7 +108,7 @@ getWebPBody = do
     "VP8L" -> WebPSimpleLossless <$> getChunkData "VP8L"
     "VP8X" -> do
       header <- getVP8XChunk
-      chunks <- getChunksUntilEnd
+      chunks <- getChunksUntilEnd (not $ vp8xHasAnimation header)
       return $ WebPExtended header chunks
     _ -> fail $ "Unknown first chunk: " ++ show firstChunkTag
 
@@ -146,40 +146,48 @@ getVP8XChunk = do
         vp8xCanvasHeight = canvasHeight
       }
 
--- | Read chunks until end of input
-getChunksUntilEnd :: Get [WebPChunk]
-getChunksUntilEnd = do
+-- | Read chunks until end of input, optionally ignoring top-level ANIM chunks.
+getChunksUntilEnd :: Bool -> Get [WebPChunk]
+getChunksUntilEnd ignoreAnim = do
   empty <- isEmpty
   if empty
     then return []
     else do
-      chunk <- getChunk
-      rest <- getChunksUntilEnd
-      return (chunk : rest)
+      chunk <- getChunk ignoreAnim
+      rest <- getChunksUntilEnd ignoreAnim
+      return $ maybe rest (: rest) chunk
 
 -- | Parse a single chunk
-getChunk :: Get WebPChunk
-getChunk = do
+getChunk :: Bool -> Get (Maybe WebPChunk)
+getChunk ignoreAnim = do
   fourCC <- getByteString 4
   chunkSize <- getWord32le
   let size = fromIntegral chunkSize
 
-  case fourCC of
-    "VP8 " -> ChunkVP8 <$> getByteString size <* skipPadding chunkSize
-    "VP8L" -> ChunkVP8L <$> getByteString size <* skipPadding chunkSize
-    "ALPH" -> ChunkALPH <$> getByteString size <* skipPadding chunkSize
-    "ANIM" -> do
-      when (size < 6) $
-        fail "ANIM chunk too small"
-      chunk <- getANIMChunk
-      skip (size - 6)
+  if ignoreAnim && fourCC == "ANIM"
+    then do
+      -- RFC 9649 section 2.7.1 requires ignoring ANIM when the VP8X
+      -- animation flag is unset, but its RIFF framing must still be valid.
+      skip size
       skipPadding chunkSize
-      return $ ChunkANIM chunk
-    "ANMF" -> do
-      chunk <- getANMFChunk size
-      skipPadding chunkSize
-      return chunk
-    _ -> ChunkUnknown fourCC <$> getByteString size <* skipPadding chunkSize
+      return Nothing
+    else
+      Just <$> case fourCC of
+        "VP8 " -> ChunkVP8 <$> getByteString size <* skipPadding chunkSize
+        "VP8L" -> ChunkVP8L <$> getByteString size <* skipPadding chunkSize
+        "ALPH" -> ChunkALPH <$> getByteString size <* skipPadding chunkSize
+        "ANIM" -> do
+          when (size < 6) $
+            fail "ANIM chunk too small"
+          chunk <- getANIMChunk
+          skip (size - 6)
+          skipPadding chunkSize
+          return $ ChunkANIM chunk
+        "ANMF" -> do
+          chunk <- getANMFChunk size
+          skipPadding chunkSize
+          return chunk
+        _ -> ChunkUnknown fourCC <$> getByteString size <* skipPadding chunkSize
 
 -- | Get chunk data for simple formats
 getChunkData :: FourCC -> Get B.ByteString
@@ -234,7 +242,8 @@ getANMFChunk totalSize = do
             anmfDispose = dispose
           }
 
-  case runGetOrFail getChunksUntilEnd (BL.fromStrict subChunksData) of
+  -- The VP8X flag applies to top-level ANIM chunks, not frame subchunks.
+  case runGetOrFail (getChunksUntilEnd False) (BL.fromStrict subChunksData) of
     Left (_, _, err) -> fail $ "Failed to parse ANMF sub-chunks: " ++ err
     Right (_, _, subChunks) -> return $ ChunkANMF frame subChunks
 

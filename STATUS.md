@@ -28,6 +28,7 @@ see `test/TestNotes.md` for validation commands and regression coverage.
 
 #### VP8 Lossy Decoder
 - Complete frame header parsing (uncompressed + compressed)
+- Validation of supported profiles, displayable frames, and nonzero dimensions
 - Boolean arithmetic decoder (range coder)
 - Macroblock-level processing (16x16 luma, 8x8 chroma)
 - Intra prediction modes:
@@ -57,6 +58,8 @@ see `test/TestNotes.md` for validation commands and regression coverage.
 - ANMF frame parsing (position, dimensions, duration, blend/dispose flags)
 - Per-frame decoding with VP8, VP8L, or alpha data
 - Animation compositing with canvas support
+- Required animation header and nonempty frame validation
+- Canvas bounds checked for raw, first-frame, and composited decoding
 
 #### Container Parsing
 - Simple lossy (VP8 only)
@@ -66,6 +69,7 @@ see `test/TestNotes.md` for validation commands and regression coverage.
 - Reserved fields ignored per spec
 - RIFF chunk parsing with padding
 - Declared RIFF length and unsigned 32-bit canvas-area validation
+- ANIM payloads ignored when the VP8X animation flag is unset
 
 ### Encoding
 
@@ -102,7 +106,7 @@ see `test/TestNotes.md` for validation commands and regression coverage.
 - ANMF frame creation with metadata
 - VP8X extended header with animation flag
 - Per-frame VP8/VP8L encoding with optional alpha
-- Validation of canvas and frame geometry, even offsets, and 24-bit durations
+- Validation of nonempty frames, canvas and frame geometry, even offsets, and 24-bit durations
 
 #### Container Creation
 - `makeRIFFContainer` - RIFF envelope

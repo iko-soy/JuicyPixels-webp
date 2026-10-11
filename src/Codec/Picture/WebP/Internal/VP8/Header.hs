@@ -139,6 +139,10 @@ parseUncompressedHeader = do
 
   when (frameTag /= 0) $
     fail "Only keyframes are supported"
+  when (versionNum > 3) $
+    fail "Unsupported VP8 profile"
+  when (showFrame == 0) $
+    fail "Only displayable VP8 frames are supported"
 
   startCode <- getByteString 3
   when (startCode /= B.pack [0x9D, 0x01, 0x2A]) $
@@ -158,6 +162,9 @@ parseUncompressedHeader = do
 
   let width = widthField .&. 0x3FFF
       height = heightField .&. 0x3FFF
+
+  when (width == 0 || height == 0) $
+    fail "VP8 frame dimensions must be nonzero"
 
   -- Frame tag is 24-bit little-endian: frame_tag = byte0 | (byte1 << 8) | (byte2 << 16)
   -- first_part_size is bits [23:5] (19 bits): (frame_tag >> 5) & 0x7FFFF

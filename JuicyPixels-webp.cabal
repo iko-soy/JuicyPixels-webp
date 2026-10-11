@@ -29,6 +29,7 @@ extra-source-files:
     test/data/regression/vp8-truncated-bool-coefficients.webp
     test/data/regression/vp8-truncated-bool-header.webp
     test/data/regression/vp8-truncated-bool-modes.webp
+    test/data/regression/vp8-wht-pass-order.webp
     test/data/regression/vp8l-copy-exact.webp
     test/data/regression/vp8l-copy-overrun.webp
     test/data/regression/vp8l-duplicate-color.webp

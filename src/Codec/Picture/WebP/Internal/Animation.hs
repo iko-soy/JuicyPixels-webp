@@ -2,6 +2,7 @@
 
 module Codec.Picture.WebP.Internal.Animation
   ( decodeAnimation,
+    decodeAnimationFirstFrame,
     decodeAnimationWithCompositing,
     decodeAnimFrame,
     combineRGBAlpha,
@@ -18,6 +19,8 @@ import Control.Monad (forM_, when)
 import Control.Monad.ST
 import Data.Bits
 import qualified Data.ByteString as B
+import Data.List.NonEmpty (NonEmpty (..))
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Vector.Storable as VS
 import qualified Data.Vector.Storable.Mutable as VSM
 import Data.Word
@@ -33,13 +36,25 @@ data WebPAnimFrame = WebPAnimFrame
 -- | Decode animation frames from a WebP file
 decodeAnimation :: WebPFile -> Either String [WebPAnimFrame]
 decodeAnimation (WebPExtended header chunks) = do
+  (_, anmfChunks) <- getAnimationData header chunks
+  mapM (decodeAnimFrameWithinCanvas (vp8xCanvasWidth header) (vp8xCanvasHeight header)) (NE.toList anmfChunks)
+decodeAnimation _ = Left "Not an animated WebP file"
+
+-- | Decode and validate the first frame without decoding later bitstreams.
+decodeAnimationFirstFrame :: WebPFile -> Either String WebPAnimFrame
+decodeAnimationFirstFrame (WebPExtended header chunks) = do
+  (_, frame :| _) <- getAnimationData header chunks
+  decodeAnimFrameWithinCanvas (vp8xCanvasWidth header) (vp8xCanvasHeight header) frame
+decodeAnimationFirstFrame _ = Left "Not an animated WebP file"
+
+-- | Validate animation metadata shared by raw, first-frame and composited decoding.
+getAnimationData :: VP8XHeader -> [WebPChunk] -> Either String (AnimHeader, NonEmpty (AnimFrame, [WebPChunk]))
+getAnimationData header chunks = do
   when (not $ vp8xHasAnimation header) $
     Left "Not an animated WebP file"
-  _animHeader <- findAnimHeader chunks
-  anmfChunks <- findAnimFrames chunks
-
-  mapM decodeAnimFrame anmfChunks
-decodeAnimation _ = Left "Not an animated WebP file"
+  animHeader <- findAnimHeader chunks
+  frames <- findAnimFrames chunks
+  return (animHeader, frames)
 
 -- | Find ANIM header
 findAnimHeader :: [WebPChunk] -> Either String AnimHeader
@@ -48,8 +63,10 @@ findAnimHeader (ChunkANIM header : _) = Right header
 findAnimHeader (_ : rest) = findAnimHeader rest
 
 -- | Find all ANMF frames
-findAnimFrames :: [WebPChunk] -> Either String [(AnimFrame, [WebPChunk])]
-findAnimFrames chunks = Right $ collectFrames chunks
+findAnimFrames :: [WebPChunk] -> Either String (NonEmpty (AnimFrame, [WebPChunk]))
+findAnimFrames chunks = case collectFrames chunks of
+  [] -> Left "No ANMF frame found"
+  frame : rest -> Right (frame :| rest)
   where
     collectFrames [] = []
     collectFrames (ChunkANMF frame subChunks : rest) =
@@ -92,6 +109,22 @@ decodeAnimFrame (frame, subChunks) = do
         webpFrameY = y
       }
 
+-- | Check decoded image bounds, preserving bitstream dimensions over ANMF hints.
+decodeAnimFrameWithinCanvas :: Int -> Int -> (AnimFrame, [WebPChunk]) -> Either String WebPAnimFrame
+decodeAnimFrameWithinCanvas canvasWidth canvasHeight frameData = do
+  webpFrame <- decodeAnimFrame frameData
+  let img = webpFrameImage webpFrame
+      x = webpFrameX webpFrame
+      y = webpFrameY webpFrame
+  when
+    ( x < 0
+        || y < 0
+        || x > canvasWidth - dynWidth img
+        || y > canvasHeight - dynHeight img
+    )
+    $ Left "Animation frame exceeds canvas bounds"
+  return webpFrame
+
 -- Helper functions to find chunks
 
 findAlphaChunk :: [WebPChunk] -> Either String B.ByteString
@@ -113,17 +146,13 @@ findVP8LInChunks (_ : rest) = findVP8LInChunks rest
 -- Returns composited frames as RGBA8 images
 decodeAnimationWithCompositing :: Int -> Int -> WebPFile -> Either String [Image PixelRGBA8]
 decodeAnimationWithCompositing canvasWidth canvasHeight (WebPExtended header chunks) = do
-  when (not $ vp8xHasAnimation header) $
-    Left "Not an animated WebP file"
+  (animHeader, anmfChunks) <- getAnimationData header chunks
   when (canvasWidth <= 0 || canvasHeight <= 0) $
     Left "Invalid canvas dimensions"
   when (canvasWidth * canvasHeight > maxCanvasPixels) $
     Left "Canvas dimensions exceed maximum supported size"
-  animHeader <- findAnimHeader chunks
-  anmfChunks <- findAnimFrames chunks
-
   let bgColor = animBackgroundColor animHeader
-  composeFrames canvasWidth canvasHeight bgColor anmfChunks
+  composeFrames canvasWidth canvasHeight bgColor (NE.toList anmfChunks)
 decodeAnimationWithCompositing _ _ _ = Left "Not an animated WebP file"
 
 -- | Maximum supported canvas size in pixels (2^28 ~ 1 GiB of RGBA data)
@@ -167,18 +196,8 @@ composeFrames canvasWidth canvasHeight bgColor frames = do
 
     go Nothing decoded
   where
-    decodeOne (frame, subChunks) = do
-      webpFrame <- decodeAnimFrame (frame, subChunks)
-      let img = webpFrameImage webpFrame
-          x = anmfX frame
-          y = anmfY frame
-      when
-        ( x < 0
-            || y < 0
-            || x + dynWidth img > canvasWidth
-            || y + dynHeight img > canvasHeight
-        )
-        $ Left "Animation frame exceeds canvas bounds"
+    decodeOne frameData@(frame, _) = do
+      webpFrame <- decodeAnimFrameWithinCanvas canvasWidth canvasHeight frameData
       return (frame, webpFrame)
 
 dynWidth, dynHeight :: DynamicImage -> Int
