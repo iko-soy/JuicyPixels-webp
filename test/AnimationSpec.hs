@@ -441,22 +441,24 @@ spec = describe "Animation" $ do
         Left err -> expectationFailure $ "Decode failed: " ++ err
 
   describe "ANMF field encoding" $ do
+    -- Use a defined payload: GHC may reorder pure exceptions, so an
+    -- undefined payload cannot reliably establish validation order.
     forM_ [(-2, 0), (0, -2), (1, 0), (0, 1), (33554432, 0), (0, 33554432)] $ \(x, y) ->
-      it ("rejects unrepresentable coordinates before evaluating the payload " ++ show (x, y)) $ do
+      it ("rejects unrepresentable coordinates " ++ show (x, y)) $ do
         let frame = metadataFrame 1 1 100 x y
-        evaluate (B.length $ makeANMFChunk frame $ error "payload evaluated")
+        evaluate (B.length $ makeANMFChunk frame B.empty)
           `shouldThrow` errorCall "ANMF coordinates must be even and in [0, 33554430]"
 
     forM_ [(0, 1), (1, 0), (-1, 1), (1, -1), (16777217, 1), (1, 16777217)] $ \(width, height) ->
-      it ("rejects unrepresentable dimensions before evaluating the payload " ++ show (width, height)) $ do
+      it ("rejects unrepresentable dimensions " ++ show (width, height)) $ do
         let frame = metadataFrame width height 100 0 0
-        evaluate (B.length $ makeANMFChunk frame $ error "payload evaluated")
+        evaluate (B.length $ makeANMFChunk frame B.empty)
           `shouldThrow` errorCall "ANMF dimensions must be in [1, 16777216]"
 
     forM_ [-1, 16777216] $ \duration ->
-      it ("rejects unrepresentable duration before evaluating the payload " ++ show duration) $ do
+      it ("rejects unrepresentable duration " ++ show duration) $ do
         let frame = metadataFrame 1 1 duration 0 0
-        evaluate (B.length $ makeANMFChunk frame $ error "payload evaluated")
+        evaluate (B.length $ makeANMFChunk frame B.empty)
           `shouldThrow` errorCall "ANMF duration must be in [0, 16777215] milliseconds"
 
     it "accepts the largest representable fields without reading frame pixels" $ do
