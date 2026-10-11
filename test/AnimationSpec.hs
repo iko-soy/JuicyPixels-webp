@@ -4,9 +4,14 @@ module AnimationSpec (spec) where
 
 import Codec.Picture
 import Codec.Picture.WebP
+import Codec.Picture.WebP.Internal.Animation (decodeAnimationWithCompositing)
 import Codec.Picture.WebP.Internal.AnimationEncode (AnimationFrame (..), makeANIMChunk, makeANMFChunk)
+import Codec.Picture.WebP.Internal.Container (parseWebP)
 import Codec.Picture.WebP.Internal.Encode (makeRIFFContainer, makeVP8LChunk, makeVP8XChunk)
+import Control.Exception (evaluate)
+import Control.Monad (forM_)
 import qualified Data.ByteString as B
+import qualified Data.Vector.Storable as VS
 import Test.Hspec
 import Test.QuickCheck
 
@@ -302,6 +307,20 @@ spec = describe "Animation" $ do
           encoded = animationData [frameChunk False (B.drop 12 $ encodeWebPLossless img)]
       expectAllAnimationError "Animation frame exceeds canvas bounds" encoded
 
+    forM_ [(2, 1), (1, 2)] $ \(width, height) ->
+      it ("rejects an out-of-canvas ANMF declaration despite a smaller bitstream " ++ show (width, height)) $ do
+        let declared = ImageRGBA8 $ Image width height VS.empty
+            frame = AnimationFrame declared 100 0 0 False False
+            encoded = animationData [makeANMFChunk frame losslessImageChunk]
+        expectAllAnimationError "Animation frame exceeds canvas bounds" encoded
+
+    it "rejects compositor dimensions whose area overflows Int" $ do
+      case parseWebP (animationData [losslessFrame (PixelRGBA8 255 0 0 255) False]) of
+        Left err -> expectationFailure err
+        Right file ->
+          fmap (const ()) (decodeAnimationWithCompositing maxBound 2 file)
+            `shouldBe` Left "Canvas dimensions exceed maximum supported size"
+
     it "accepts exact canvas edges and keeps first and raw frames uncomposited" $ do
       let body = makeVP8XChunk 3 3 True True <> makeANIMChunk 0 0 <> positionedFrame 1 1 2 2
           encoded = makeRIFFContainer (fromIntegral $ B.length body) body
@@ -421,7 +440,36 @@ spec = describe "Animation" $ do
         Right decodedFrames -> length decodedFrames `shouldBe` 5
         Left err -> expectationFailure $ "Decode failed: " ++ err
 
+  describe "ANMF field encoding" $ do
+    -- Use a defined payload: GHC may reorder pure exceptions, so an
+    -- undefined payload cannot reliably establish validation order.
+    forM_ [(-2, 0), (0, -2), (1, 0), (0, 1), (33554432, 0), (0, 33554432)] $ \(x, y) ->
+      it ("rejects unrepresentable coordinates " ++ show (x, y)) $ do
+        let frame = metadataFrame 1 1 100 x y
+        evaluate (B.length $ makeANMFChunk frame B.empty)
+          `shouldThrow` errorCall "ANMF coordinates must be even and in [0, 33554430]"
+
+    forM_ [(0, 1), (1, 0), (-1, 1), (1, -1), (16777217, 1), (1, 16777217)] $ \(width, height) ->
+      it ("rejects unrepresentable dimensions " ++ show (width, height)) $ do
+        let frame = metadataFrame width height 100 0 0
+        evaluate (B.length $ makeANMFChunk frame B.empty)
+          `shouldThrow` errorCall "ANMF dimensions must be in [1, 16777216]"
+
+    forM_ [-1, 16777216] $ \duration ->
+      it ("rejects unrepresentable duration " ++ show duration) $ do
+        let frame = metadataFrame 1 1 duration 0 0
+        evaluate (B.length $ makeANMFChunk frame B.empty)
+          `shouldThrow` errorCall "ANMF duration must be in [0, 16777215] milliseconds"
+
+    it "accepts the largest representable fields without reading frame pixels" $ do
+      let frame = metadataFrame 16777216 16777216 16777215 33554430 33554430
+      B.length (makeANMFChunk frame B.empty) `shouldBe` 24
+
 -- Helper functions
+metadataFrame :: Int -> Int -> Int -> Int -> Int -> AnimationFrame
+metadataFrame width height duration x y =
+  AnimationFrame (ImageRGBA8 $ Image width height VS.empty) duration x y False False
+
 -- Lossless one-pixel frames isolate compositing from lossy color conversion.
 losslessFrame :: PixelRGBA8 -> Bool -> B.ByteString
 losslessFrame pixel blend =

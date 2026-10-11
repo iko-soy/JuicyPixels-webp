@@ -2,6 +2,8 @@ module VP8RegressionSpec (spec) where
 
 import Codec.Picture
 import Codec.Picture.WebP (decodeWebP)
+import Codec.Picture.WebP.Internal.Container (WebPFile (..), parseWebP)
+import Codec.Picture.WebP.Internal.Encode (makeRIFFContainer, makeVP8Chunk)
 import Codec.Picture.WebP.Internal.VP8.Dequant
 import Control.Monad (forM_)
 import qualified Data.ByteString as B
@@ -74,6 +76,25 @@ spec = describe "VP8 interoperability regressions" $ do
 
     it "allows empty coefficients for skipped B_PRED macroblocks" $
       checkPixels "vp8-empty-bpred-coefficients.webp" [((0, 0), 130), ((4, 4), 132), ((15, 15), 132)]
+
+    it "decodes a frame with more coefficient partitions than macroblock rows" $
+      checkPixels "vp8-two-partitions.webp" [((0, 0), 214), ((4, 0), 172), ((15, 15), 158)]
+
+    it "permits an empty coefficient partition that no macroblock reads" $ do
+      bytes <- B.readFile "test/data/regression/vp8-two-partitions.webp"
+      case parseWebP bytes of
+        Right (WebPSimpleLossy payload) -> do
+          -- The last partition is an unused single byte; removing it must
+          -- not invalidate the first partition used by the sole MB row.
+          let chunk = makeVP8Chunk (B.init payload)
+              emptyLastPartition = makeRIFFContainer (fromIntegral $ B.length chunk) chunk
+          case decodeWebP emptyLastPartition of
+            Right (ImageRGB8 img) -> do
+              (imageWidth img, imageHeight img) `shouldBe` (16, 16)
+              pixelAt img 0 0 `shouldBe` PixelRGB8 214 214 214
+            Left err -> expectationFailure err
+            _ -> expectationFailure "Expected an RGB image"
+        _ -> expectationFailure "Expected a simple lossy fixture"
 
     it "rejects an empty partition when a macroblock needs coefficients" $ do
       bytes <- B.readFile "test/data/regression/vp8-missing-coefficients.webp"

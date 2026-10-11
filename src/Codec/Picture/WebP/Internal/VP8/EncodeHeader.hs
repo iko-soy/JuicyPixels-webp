@@ -39,8 +39,8 @@ generateUncompressedHeader width height firstPartSize =
       -- Validate before narrowing to Word32, so oversized mode partitions
       -- cannot wrap and move the decoder's coefficient-partition boundary.
       firstPartSize'
-        | firstPartSize < 0 || firstPartSize > 0x7FFFF =
-            error $ "VP8 encoding requires first partition size in [0, 524287] bytes, got " ++ show firstPartSize
+        | firstPartSize < 1 || firstPartSize > 0x7FFFF =
+            error $ "VP8 encoding requires first partition size in [1, 524287] bytes, got " ++ show firstPartSize
         | otherwise = fromIntegral firstPartSize :: Word32
 
       -- Construct 3-byte frame tag (little-endian)
@@ -157,13 +157,11 @@ writeCoeffProbUpdates updatedProbs updateFlags enc =
             let idx = i * 264 + j * 33 + k * 11 + l
                 updateProb = coeffUpdateProbs VU.! idx
              in if updateFlags VU.! idx
-                  then
-                    -- Signal update: True flag + 8-bit probability value
+                  then -- Signal update: True flag + 8-bit probability value
                     let e1 = boolWrite updateProb True e
                         e2 = boolWriteLiteral 8 (fromIntegral $ updatedProbs VU.! idx) e1
                      in loop i j k (l + 1) e2
-                  else
-                    -- No update: False flag
+                  else -- No update: False flag
                     let e1 = boolWrite updateProb False e
                      in loop i j k (l + 1) e1
    in loop 0 0 0 0 enc

@@ -19,13 +19,17 @@ spec = do
         generateUncompressedHeader 16 17 524287
           `shouldBe` B.pack [0xf0, 0xff, 0xff, 0x9d, 0x01, 0x2a, 0x10, 0x00, 0x11, 0x00]
 
+      it "accepts the smallest nonempty first partition" $
+        generateUncompressedHeader 16 17 1
+          `shouldBe` B.pack [0x30, 0x00, 0x00, 0x9d, 0x01, 0x2a, 0x10, 0x00, 0x11, 0x00]
+
       mapM_
         ( \size ->
-            it ("rejects an unrepresentable first partition size of " ++ show size) $
+            it ("rejects an invalid first partition size of " ++ show size) $
               evaluate (generateUncompressedHeader 16 17 size)
-                `shouldThrow` errorCall ("VP8 encoding requires first partition size in [0, 524287] bytes, got " ++ show size)
+                `shouldThrow` errorCall ("VP8 encoding requires first partition size in [1, 524287] bytes, got " ++ show size)
         )
-        [-1, 524288, maxBound :: Int]
+        [-1, 0, 524288, maxBound :: Int]
 
     describe "Basic Encoding" $ do
       it "encodes and decodes a simple red image (16x16)" $ do

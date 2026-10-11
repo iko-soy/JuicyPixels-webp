@@ -13,7 +13,9 @@ spec = do
   describe "Edge Cases and Boundary Conditions" $ do
     describe "VP8 partition validation" $ do
       it "rejects an empty first partition without throwing" $
-        expectInvalidVP8 (generateUncompressedHeader 16 16 0)
+        -- Construct the malformed header directly: the encoder rejects
+        -- an empty first partition before it can produce these bytes.
+        expectInvalidVP8 (B.pack [0x10, 0, 0, 0x9d, 0x01, 0x2a, 16, 0, 16, 0])
 
       it "rejects a first partition longer than the remaining data" $
         -- Valid skipped B_PRED mode data occupies nine bytes, but the

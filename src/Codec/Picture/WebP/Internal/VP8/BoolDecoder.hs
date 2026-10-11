@@ -302,7 +302,7 @@ kVP8NewRange =
 -- | Initialize a boolean decoder from a ByteString
 initBoolDecoder :: B.ByteString -> BoolDecoder
 initBoolDecoder bs
-  | B.length bs < 1 = error "BoolDecoder: need at least 1 byte"
+  | B.null bs = BoolDecoder bs 254 0 0 0 True
   | otherwise =
       let -- Load initial bytes into value
           len = min (B.length bs) 4
@@ -363,8 +363,7 @@ boolRead prob decoder =
               !finalRange = kVP8NewRange VU.! rangeIdx
               !newBits = pos - shift
            in (bit, dec {bdRange = finalRange, bdValue = newValue, bdBits = newBits})
-        else
-          (bit, dec {bdRange = newRange, bdValue = newValue})
+        else (bit, dec {bdRange = newRange, bdValue = newValue})
 
 -- | Read n bits as a literal (probability 128, MSB-first)
 {-# INLINE boolLiteral #-}

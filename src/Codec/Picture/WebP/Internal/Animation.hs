@@ -109,9 +109,19 @@ decodeAnimFrame (frame, subChunks) = do
         webpFrameY = y
       }
 
--- | Check decoded image bounds, preserving bitstream dimensions over ANMF hints.
+-- | Check both declared and decoded bounds, preserving bitstream dimensions
+-- when they differ from the ANMF header.
 decodeAnimFrameWithinCanvas :: Int -> Int -> (AnimFrame, [WebPChunk]) -> Either String WebPAnimFrame
-decodeAnimFrameWithinCanvas canvasWidth canvasHeight frameData = do
+decodeAnimFrameWithinCanvas canvasWidth canvasHeight frameData@(frame, _) = do
+  when
+    ( anmfX frame < 0
+        || anmfY frame < 0
+        || anmfWidth frame <= 0
+        || anmfHeight frame <= 0
+        || anmfX frame > canvasWidth - anmfWidth frame
+        || anmfY frame > canvasHeight - anmfHeight frame
+    )
+    $ Left "Animation frame exceeds canvas bounds"
   webpFrame <- decodeAnimFrame frameData
   let img = webpFrameImage webpFrame
       x = webpFrameX webpFrame
@@ -149,7 +159,7 @@ decodeAnimationWithCompositing canvasWidth canvasHeight (WebPExtended header chu
   (animHeader, anmfChunks) <- getAnimationData header chunks
   when (canvasWidth <= 0 || canvasHeight <= 0) $
     Left "Invalid canvas dimensions"
-  when (canvasWidth * canvasHeight > maxCanvasPixels) $
+  when (toInteger canvasWidth * toInteger canvasHeight > toInteger maxCanvasPixels) $
     Left "Canvas dimensions exceed maximum supported size"
   let bgColor = animBackgroundColor animHeader
   composeFrames canvasWidth canvasHeight bgColor (NE.toList anmfChunks)

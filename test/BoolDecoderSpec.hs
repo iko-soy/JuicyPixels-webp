@@ -23,6 +23,12 @@ spec = describe "BoolDecoder" $ do
           decoder = initBoolDecoder bs
       bdRange decoder `shouldBe` 254
 
+    it "marks empty input as exhausted without throwing" $ do
+      let decoder = initBoolDecoder B.empty
+          (_, afterRead) = boolLiteral 32 decoder
+      bdEof decoder `shouldBe` True
+      bdEof afterRead `shouldBe` True
+
   describe "Boolean Reading" $ do
     it "reads bit with probability 128 (50/50)" $ do
       let bs = B.pack [0xFF, 0xFF, 0x00, 0x00]

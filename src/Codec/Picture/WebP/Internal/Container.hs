@@ -9,6 +9,7 @@ module Codec.Picture.WebP.Internal.Container
     AnimFrame (..),
     FourCC,
     parseWebP,
+    validateVP8XDimensions,
   )
 where
 
@@ -36,6 +37,15 @@ data VP8XHeader = VP8XHeader
     vp8xCanvasHeight :: !Int
   }
   deriving (Show, Eq)
+
+-- | Validate the representable canvas dimensions and RFC 9649 area limit.
+validateVP8XDimensions :: Int -> Int -> Either String ()
+validateVP8XDimensions width height
+  | width < 1 || height < 1 || width > 16777216 || height > 16777216 =
+      Left $ "VP8X canvas dimensions must be in [1, 16777216], got " ++ show width ++ "x" ++ show height
+  | toInteger width * toInteger height > 0xFFFFFFFF =
+      Left "VP8X canvas area exceeds the unsigned 32-bit limit"
+  | otherwise = Right ()
 
 -- | Animation header
 data AnimHeader = AnimHeader
@@ -120,8 +130,8 @@ getVP8XChunk = do
     fail "Expected VP8X chunk"
 
   chunkSize <- getWord32le
-  unless (chunkSize == 10) $
-    fail "VP8X chunk size must be 10"
+  when (chunkSize < 10) $
+    fail "VP8X chunk size must be at least 10"
 
   flags <- getWord8
   let hasAlpha = testBit flags 4
@@ -135,8 +145,11 @@ getVP8XChunk = do
   canvasHeightMinus1 <- getWord24le
   let canvasWidth = fromIntegral canvasWidthMinus1 + 1
       canvasHeight = fromIntegral canvasHeightMinus1 + 1
-  when (toInteger canvasWidth * toInteger canvasHeight > 0xFFFFFFFF) $
-    fail "VP8X canvas area exceeds the unsigned 32-bit limit"
+  either fail return (validateVP8XDimensions canvasWidth canvasHeight)
+
+  -- Future VP8X fields must be ignored while preserving chunk alignment.
+  skip (fromIntegral chunkSize - 10)
+  skipPadding chunkSize
 
   return $
     VP8XHeader
