@@ -81,7 +81,6 @@ validateAnimation frames canvasWidth canvasHeight
               then error "Animation encoding requires nonnegative, even frame offsets"
               else -- Subtract the bounded frame dimensions rather than adding
               -- untrusted offsets, which could overflow Int.
-
                 if x > canvasWidth - width || y > canvasHeight - height
                   then error "Animation frame exceeds canvas bounds"
                   else

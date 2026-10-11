@@ -251,7 +251,7 @@ spec = do
                   50 -- 50ms per frame
                   0
                   0
-                | i <- [0 .. 19]
+              | i <- [0 .. 19]
               ]
             encoded = encodeWebPAnimation frames 16 16 80
 
@@ -266,7 +266,7 @@ spec = do
                   (i * 100)
                   0
                   0
-                | i <- [1 .. 5]
+              | i <- [1 .. 5]
               ]
             encoded = encodeWebPAnimation frames 16 16 80
 
@@ -385,7 +385,7 @@ computeMSE orig decoded =
                 dg = fromIntegral g1 - fromIntegral g2 :: Double
                 db = fromIntegral b1 - fromIntegral b2 :: Double
              in dr * dr + dg * dg + db * db
-            | y <- [0 .. h - 1],
-              x <- [0 .. w - 1]
+          | y <- [0 .. h - 1],
+            x <- [0 .. w - 1]
           ]
    in sumSqErr / (fromIntegral (w * h * 3))

@@ -158,12 +158,10 @@ writeCoeffProbUpdates updatedProbs updateFlags enc =
                 updateProb = coeffUpdateProbs VU.! idx
              in if updateFlags VU.! idx
                   then -- Signal update: True flag + 8-bit probability value
-
                     let e1 = boolWrite updateProb True e
                         e2 = boolWriteLiteral 8 (fromIntegral $ updatedProbs VU.! idx) e1
                      in loop i j k (l + 1) e2
                   else -- No update: False flag
-
                     let e1 = boolWrite updateProb False e
                      in loop i j k (l + 1) e1
    in loop 0 0 0 0 enc

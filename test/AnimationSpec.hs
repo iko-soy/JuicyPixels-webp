@@ -44,7 +44,7 @@ spec = describe "Animation" $ do
                 50
                 0
                 0
-              | i <- [0 .. 9]
+            | i <- [0 .. 9]
             ]
           encoded = encodeWebPAnimation frames 16 16 80
 
@@ -59,7 +59,7 @@ spec = describe "Animation" $ do
                 20
                 0
                 0
-              | i <- [0 .. 49]
+            | i <- [0 .. 49]
             ]
           encoded = encodeWebPAnimation frames 8 8 60
 
@@ -103,7 +103,7 @@ spec = describe "Animation" $ do
       let durations = [10, 50, 100, 200, 500, 1000]
           frames =
             [ WebPEncodeFrame (ImageRGB8 $ generateImage (\_ _ -> PixelRGB8 128 128 128) 16 16) d 0 0
-              | d <- durations
+            | d <- durations
             ]
           encoded = encodeWebPAnimation frames 16 16 80
 
@@ -186,7 +186,7 @@ spec = describe "Animation" $ do
                 100
                 0
                 0
-              | (r, g, b) <- colors
+            | (r, g, b) <- colors
             ]
           encoded = encodeWebPAnimation frames 16 16 90
 
@@ -204,7 +204,7 @@ spec = describe "Animation" $ do
                 50
                 0
                 0
-              | i <- [0 .. 9 :: Int]
+            | i <- [0 .. 9 :: Int]
             ]
           encoded = encodeWebPAnimation frames 16 16 80
 
