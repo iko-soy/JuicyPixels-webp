@@ -11,7 +11,50 @@ under `test/data/regression/` were checked with libwebp; their expected pixels
 do not depend on this library's encoder. Component tests also cover 15-bit
 Huffman codes, packed row boundaries, and speculative bit-reader lookahead.
 
-## Current Test Status: 470 tests, all passing
+`EdgeCasesSpec` also rejects empty or oversized first VP8 partitions and
+coefficient partition sizes that exceed the available data. Additional cases
+exercise entropy groups across both axes, predictor-map rows before and after
+palette expansion, and direct Huffman entries alongside multiple secondary tables.
+
+The specification validation regressions also cover keyframe segmentation
+defaults, exhausted VP8 arithmetic streams, repeated VP8L transforms, unknown
+ALPH compression methods, animation flags and duplicate frame subchunks, RIFF
+truncation, and the VP8X canvas-area limit. Encoder checks cover the 19-bit VP8
+first-partition limit and animation canvas geometry, even offsets, and 24-bit
+durations. Boundary controls preserve valid short streams, trailing RIFF data,
+unknown animation subchunks, and the largest representable metadata values.
+
+Further regressions cover the inverse Walsh-Hadamard transform's column-first
+pass order with large Y2 coefficients, reserved VP8 profiles, non-displayable
+frames, and zero frame dimensions. Animation tests require an ANIM header and
+at least one frame, reject empty animation encoding, and check canvas bounds
+across raw, first-frame, and composited decoding. Container tests ensure ANIM
+payloads are ignored when the animation flag is unset while preserving chunk
+framing checks and validation for animated files.
+
+Simple prefix-code tests permit unused distance symbols 40–255 in either
+serialized position, preserve bit consumption, and reject empty resulting
+trees. Reference-checked fixtures exercise a distance copy followed by a
+literal. The still-image API rejects the animation flag for VP8, VP8L, and
+ALPH + VP8 containers, while the dedicated APIs continue to decode animations.
+
+Chunk-order regressions reject late ALPH, ICCP, ANIM, and VP8X chunks. Positive
+controls allow metadata and unknown chunks between reconstruction chunks,
+reset alpha/bitstream ordering for each animation frame, and keep ignoring
+ANIM chunks when the animation flag is unset.
+
+## Full-suite validation
+
+Run all functional, property, quality, and stress tests with:
+
+```bash
+stack --no-nix --lock-file read-only -j4 test --ghc-options='-O1 -fomit-interface-pragmas' --test-arguments='--jobs=2 +RTS -N2 -RTS'
+```
+
+This retains optimizations from dependencies such as `vector` while limiting
+large function expansions between codec modules. When changing compiler options
+on an existing build, run `stack --no-nix clean` first so older object files are
+not reused.
 
 ### Known Test Limitations
 

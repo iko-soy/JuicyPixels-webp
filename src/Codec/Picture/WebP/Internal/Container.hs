@@ -90,7 +90,9 @@ getWebP = do
 
   rest <- getRemainingLazyByteString
   let declared = fromIntegral fileSize - 4
-      payload = BL.take declared rest
+  when (BL.length rest < declared) $
+    fail "RIFF size exceeds the available data"
+  let payload = BL.take declared rest
 
   case runGetOrFail getWebPBody payload of
     Left (_, _, err) -> fail err
@@ -106,7 +108,7 @@ getWebPBody = do
     "VP8L" -> WebPSimpleLossless <$> getChunkData "VP8L"
     "VP8X" -> do
       header <- getVP8XChunk
-      chunks <- getChunksUntilEnd
+      chunks <- getChunksUntilEnd TopLevelChunks (not $ vp8xHasAnimation header)
       return $ WebPExtended header chunks
     _ -> fail $ "Unknown first chunk: " ++ show firstChunkTag
 
@@ -131,49 +133,86 @@ getVP8XChunk = do
 
   canvasWidthMinus1 <- getWord24le
   canvasHeightMinus1 <- getWord24le
+  let canvasWidth = fromIntegral canvasWidthMinus1 + 1
+      canvasHeight = fromIntegral canvasHeightMinus1 + 1
+  when (toInteger canvasWidth * toInteger canvasHeight > 0xFFFFFFFF) $
+    fail "VP8X canvas area exceeds the unsigned 32-bit limit"
 
   return $
     VP8XHeader
       { vp8xHasAlpha = hasAlpha,
         vp8xHasAnimation = hasAnimation,
-        vp8xCanvasWidth = fromIntegral canvasWidthMinus1 + 1,
-        vp8xCanvasHeight = fromIntegral canvasHeightMinus1 + 1
+        vp8xCanvasWidth = canvasWidth,
+        vp8xCanvasHeight = canvasHeight
       }
 
--- | Read chunks until end of input
-getChunksUntilEnd :: Get [WebPChunk]
-getChunksUntilEnd = do
-  empty <- isEmpty
-  if empty
-    then return []
-    else do
-      chunk <- getChunk
-      rest <- getChunksUntilEnd
-      return (chunk : rest)
+data ChunkContext = TopLevelChunks | FrameChunks
+
+-- | Read chunks in reconstruction order (RFC 9649 section 2.7).
+-- Each ANMF starts a separate sequence. Metadata, unknown chunks and ignored
+-- ANIM chunks do not change the ordering state.
+getChunksUntilEnd :: ChunkContext -> Bool -> Get [WebPChunk]
+getChunksUntilEnd context ignoreAnim = go 0
+  where
+    go previousOrder = do
+      empty <- isEmpty
+      if empty
+        then return []
+        else do
+          chunk <- getChunk ignoreAnim
+          nextOrder <- case chunk >>= reconstructionOrder context of
+            Just (order, tag) -> do
+              when (order < previousOrder) $
+                fail $
+                  "Out-of-order WebP chunk: " ++ show tag
+              return order
+            Nothing -> return previousOrder
+          rest <- go nextOrder
+          return $ maybe rest (: rest) chunk
+
+-- VP8X has already been consumed and cannot occur again. ICCP, ANIM and ANMF
+-- have top-level roles; only ALPH and the bitstream are ordered inside frames.
+reconstructionOrder :: ChunkContext -> WebPChunk -> Maybe (Int, FourCC)
+reconstructionOrder _ (ChunkUnknown "VP8X" _) = Just (-1, "VP8X")
+reconstructionOrder TopLevelChunks (ChunkUnknown "ICCP" _) = Just (0, "ICCP")
+reconstructionOrder TopLevelChunks (ChunkANIM _) = Just (1, "ANIM")
+reconstructionOrder TopLevelChunks (ChunkANMF _ _) = Just (2, "ANMF")
+reconstructionOrder _ (ChunkALPH _) = Just (3, "ALPH")
+reconstructionOrder _ (ChunkVP8 _) = Just (4, "VP8 ")
+reconstructionOrder _ (ChunkVP8L _) = Just (4, "VP8L")
+reconstructionOrder _ _ = Nothing
 
 -- | Parse a single chunk
-getChunk :: Get WebPChunk
-getChunk = do
+getChunk :: Bool -> Get (Maybe WebPChunk)
+getChunk ignoreAnim = do
   fourCC <- getByteString 4
   chunkSize <- getWord32le
   let size = fromIntegral chunkSize
 
-  case fourCC of
-    "VP8 " -> ChunkVP8 <$> getByteString size <* skipPadding chunkSize
-    "VP8L" -> ChunkVP8L <$> getByteString size <* skipPadding chunkSize
-    "ALPH" -> ChunkALPH <$> getByteString size <* skipPadding chunkSize
-    "ANIM" -> do
-      when (size < 6) $
-        fail "ANIM chunk too small"
-      chunk <- getANIMChunk
-      skip (size - 6)
+  if ignoreAnim && fourCC == "ANIM"
+    then do
+      -- RFC 9649 section 2.7.1 requires ignoring ANIM when the VP8X
+      -- animation flag is unset, but its RIFF framing must still be valid.
+      skip size
       skipPadding chunkSize
-      return $ ChunkANIM chunk
-    "ANMF" -> do
-      chunk <- getANMFChunk size
-      skipPadding chunkSize
-      return chunk
-    _ -> ChunkUnknown fourCC <$> getByteString size <* skipPadding chunkSize
+      return Nothing
+    else
+      Just <$> case fourCC of
+        "VP8 " -> ChunkVP8 <$> getByteString size <* skipPadding chunkSize
+        "VP8L" -> ChunkVP8L <$> getByteString size <* skipPadding chunkSize
+        "ALPH" -> ChunkALPH <$> getByteString size <* skipPadding chunkSize
+        "ANIM" -> do
+          when (size < 6) $
+            fail "ANIM chunk too small"
+          chunk <- getANIMChunk
+          skip (size - 6)
+          skipPadding chunkSize
+          return $ ChunkANIM chunk
+        "ANMF" -> do
+          chunk <- getANMFChunk size
+          skipPadding chunkSize
+          return chunk
+        _ -> ChunkUnknown fourCC <$> getByteString size <* skipPadding chunkSize
 
 -- | Get chunk data for simple formats
 getChunkData :: FourCC -> Get B.ByteString
@@ -228,7 +267,8 @@ getANMFChunk totalSize = do
             anmfDispose = dispose
           }
 
-  case runGetOrFail getChunksUntilEnd (BL.fromStrict subChunksData) of
+  -- The VP8X flag applies to top-level ANIM chunks, not frame subchunks.
+  case runGetOrFail (getChunksUntilEnd FrameChunks False) (BL.fromStrict subChunksData) of
     Left (_, _, err) -> fail $ "Failed to parse ANMF sub-chunks: " ++ err
     Right (_, _, subChunks) -> return $ ChunkANMF frame subChunks
 

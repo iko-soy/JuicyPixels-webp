@@ -3,6 +3,7 @@
 module BoolDecoderSpec (spec) where
 
 import Codec.Picture.WebP.Internal.VP8.BoolDecoder
+import Codec.Picture.WebP.Internal.VP8.BoolEncoder
 import qualified Data.ByteString as B
 import Data.Int
 import qualified Data.Vector as V
@@ -132,6 +133,31 @@ spec = describe "BoolDecoder" $ do
       bdRange d3 `shouldSatisfy` (\r -> r >= 127 && r <= 254)
 
   describe "Edge Cases" $ do
+    it "allows final normalization without reading beyond the partition" $ do
+      let (_, decoder) = boolLiteral 2 (initBoolDecoder $ B.singleton 0)
+      bdBits decoder `shouldBe` (-1)
+      bdEof decoder `shouldBe` False
+
+    it "records the first refill beyond the partition" $ do
+      let (_, decoder) = boolLiteral 3 (initBoolDecoder $ B.singleton 0)
+      bdEof decoder `shouldBe` True
+
+    it "keeps EOF set after further reads" $ do
+      let (_, decoder) = boolLiteral 64 (initBoolDecoder $ B.singleton 0)
+      bdEof decoder `shouldBe` True
+
+    it "decodes a terminated arithmetic stream without extra padding bytes" $ do
+      let symbols = take 129 $ zip (cycle [1, 13, 128, 254, 255]) (cycle [True, False, False])
+          encoder = foldl (\enc (prob, bit) -> boolWrite prob bit enc) initBoolEncoder symbols
+          padded = finalizeBoolEncoder encoder
+          bytes = B.take (B.length padded - 32) padded
+          readSymbol (bits, dec) (prob, _) =
+            let (bit, dec') = boolRead prob dec
+             in (bit : bits, dec')
+          (bits, decoder) = foldl readSymbol ([], initBoolDecoder bytes) symbols
+      reverse bits `shouldBe` map snd symbols
+      bdEof decoder `shouldBe` False
+
     it "handles probability extremes" $ do
       let bs = B.pack [0xFF, 0xFF, 0xFF, 0xFF]
           decoder = initBoolDecoder bs

@@ -2,12 +2,31 @@ module VP8EncodeSpec (spec) where
 
 import Codec.Picture
 import Codec.Picture.WebP
+import Codec.Picture.WebP.Internal.VP8.EncodeHeader (generateUncompressedHeader)
+import Control.Exception (evaluate)
 import qualified Data.ByteString as B
 import Test.Hspec
 
 spec :: Spec
 spec = do
   describe "VP8 Lossy Encoder" $ do
+    describe "First partition size" $ do
+      it "preserves the bytes of a valid key-frame header" $
+        generateUncompressedHeader 16 17 123
+          `shouldBe` B.pack [0x70, 0x0f, 0x00, 0x9d, 0x01, 0x2a, 0x10, 0x00, 0x11, 0x00]
+
+      it "accepts the largest representable first partition" $
+        generateUncompressedHeader 16 17 524287
+          `shouldBe` B.pack [0xf0, 0xff, 0xff, 0x9d, 0x01, 0x2a, 0x10, 0x00, 0x11, 0x00]
+
+      mapM_
+        ( \size ->
+            it ("rejects an unrepresentable first partition size of " ++ show size) $
+              evaluate (generateUncompressedHeader 16 17 size)
+                `shouldThrow` errorCall ("VP8 encoding requires first partition size in [0, 524287] bytes, got " ++ show size)
+        )
+        [-1, 524288, maxBound :: Int]
+
     describe "Basic Encoding" $ do
       it "encodes and decodes a simple red image (16x16)" $ do
         let img = generateImage (\_ _ -> PixelRGB8 255 0 0) 16 16

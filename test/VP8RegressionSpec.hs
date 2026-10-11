@@ -34,10 +34,21 @@ spec = describe "VP8 interoperability regressions" $ do
       let factors = computeDequantFactors (QuantIndices 80 10 10 10 10 10) (Just $ segment True (-10)) V.! 0
       factors `shouldBe` DequantFactors 4 4 8 8 4 4
 
-  -- These fixed bitstreams were independently decoded with libwebp 1.5.0.
+  -- These fixed bitstreams were independently decoded with libwebp.
   -- All have neutral chroma; expected samples are
   -- reference RGB values, rather than an encode/decode roundtrip oracle.
   describe "Reference bitstreams" $ do
+    it "reconstructs Y2 coefficients in the reference WHT pass order" $
+      checkPixels
+        "vp8-wht-pass-order.webp"
+        [ ((0, 0), 255),
+          ((3, 3), 255),
+          ((4, 0), 130),
+          ((8, 0), 0),
+          ((12, 0), 130),
+          ((0, 15), 255)
+        ]
+
     it "reconstructs QI 5 coefficients with the reference DC scale" $
       checkPixels "vp8-quantizer.webp" [((0, 0), 214), ((3, 3), 214)]
 
@@ -54,6 +65,9 @@ spec = describe "VP8 interoperability regressions" $ do
 
     it "clips the complete segmented quantizer index" $
       checkPixels "vp8-segment-quantizer.webp" [((0, 0), 168), ((3, 3), 168)]
+
+    it "uses absolute segment defaults when feature data is not updated" $
+      checkPixels "vp8-segment-default-absolute.webp" [((0, 0), 140), ((3, 3), 140), ((4, 0), 135), ((4, 4), 136)]
 
     it "allows an empty coefficient partition when the macroblock skips it" $
       checkPixels "vp8-empty-coefficients.webp" [((0, 0), 130), ((15, 15), 130)]
@@ -82,6 +96,23 @@ spec = describe "VP8 interoperability regressions" $ do
           ((8, 0), 172),
           ((12, 0), 151)
         ]
+
+  describe "Boolean input exhaustion" $ do
+    it "accepts a short mode partition with just its arithmetic termination bytes" $
+      checkPixels "vp8-short-bool-modes.webp" [((0, 0), 130), ((4, 4), 132)]
+
+    it "accepts a short coefficient partition without extra lookahead padding" $
+      checkPixels "vp8-short-bool-coefficients.webp" [((0, 0), 214), ((3, 3), 214)]
+
+    forM_
+      [ ("compressed header", "vp8-truncated-bool-header.webp"),
+        ("macroblock modes", "vp8-truncated-bool-modes.webp"),
+        ("coefficients", "vp8-truncated-bool-coefficients.webp")
+      ]
+      $ \(section, fixture) ->
+        it ("rejects truncated " ++ section ++ " within nonempty partitions") $ do
+          bytes <- B.readFile $ "test/data/regression/" ++ fixture
+          fmap (const ()) (decodeWebP bytes) `shouldBe` Left ("Unexpected end of VP8 " ++ section)
 
 segment :: Bool -> Int -> SegmentInfo
 segment absoluteMode quantizer =

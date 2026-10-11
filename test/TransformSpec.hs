@@ -57,6 +57,36 @@ spec = describe "VP8L Transforms" $ do
         Left err -> expectationFailure $ "Transform failed: " ++ err
 
   describe "Transform Ordering" $ do
+    it "restores the original width and predictor grid before an earlier predictor" $ do
+      let palette = VS.singleton (packARGB 0 0 1 0)
+          modes = VS.fromList [packARGB 255 0 mode 0 | mode <- [1, 0, 2, 2, 1, 0]]
+          transforms = [TransformPredictor 2 modes, TransformColorIndex palette 3]
+          packed = VS.replicate 10 0 -- Two packed pixels per row, five rows.
+          greens =
+            [ [1, 2, 3, 4, 5, 6, 7, 8, 9],
+              [2, 3, 4, 5, 1, 1, 1, 1, 10],
+              [3, 4, 5, 6, 1, 1, 1, 1, 11],
+              [4, 5, 6, 7, 1, 1, 1, 1, 12],
+              [5, 6, 7, 8, 9, 10, 11, 12, 1]
+            ]
+          expected = VS.fromList [packARGB 255 0 g 0 | g <- concat greens]
+      applyInverseTransforms transforms 9 5 packed `shouldBe` Right expected
+
+    it "uses the packed width and predictor grid for a predictor after color indexing" $ do
+      let palette = VS.fromList [packARGB 255 10 20 30, packARGB 255 40 50 60]
+          modes = VS.fromList [packARGB 255 0 mode 0 | mode <- [1, 0]]
+          transforms = [TransformColorIndex palette 3, TransformPredictor 2 modes]
+          residuals = VS.replicate 10 (packARGB 0 0 1 0)
+          indices =
+            [ [1, 0, 0, 0, 0, 0, 0, 0, 0],
+              [0, 1, 0, 0, 0, 0, 0, 0, 1],
+              [1, 1, 0, 0, 0, 0, 0, 0, 0],
+              [0, 0, 1, 0, 0, 0, 0, 0, 1],
+              [1, 0, 1, 0, 0, 0, 0, 0, 1]
+            ]
+          expected = VS.fromList [palette VS.! i | i <- concat indices]
+      applyInverseTransforms transforms 9 5 residuals `shouldBe` Right expected
+
     it "applies transforms in reverse order" $ do
       let pixels = VS.fromList [packARGB 255 100 100 100]
           transforms = [TransformSubGreen] -- Applied in reverse

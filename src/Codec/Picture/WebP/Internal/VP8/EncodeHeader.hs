@@ -25,7 +25,7 @@ validateVP8Dimensions width height
   | otherwise = ()
 
 -- | Generate uncompressed VP8 frame header (10 bytes)
--- Returns the header bytes
+-- Rejects dimensions or a first partition size that do not fit their fields.
 generateUncompressedHeader ::
   Int -> -- Width
   Int -> -- Height
@@ -36,7 +36,12 @@ generateUncompressedHeader width height firstPartSize =
       frameType = 0 :: Word32 -- 0 = key frame
       version = 0 :: Word32 -- Version 0
       showFrame = 1 :: Word32 -- Show frame
-      firstPartSize' = fromIntegral firstPartSize :: Word32
+      -- Validate before narrowing to Word32, so oversized mode partitions
+      -- cannot wrap and move the decoder's coefficient-partition boundary.
+      firstPartSize'
+        | firstPartSize < 0 || firstPartSize > 0x7FFFF =
+            error $ "VP8 encoding requires first partition size in [0, 524287] bytes, got " ++ show firstPartSize
+        | otherwise = fromIntegral firstPartSize :: Word32
 
       -- Construct 3-byte frame tag (little-endian)
       -- Bit 0: frame_type
@@ -47,7 +52,7 @@ generateUncompressedHeader width height firstPartSize =
         (frameType .&. 1)
           .|. ((version .&. 7) `shiftL` 1)
           .|. ((showFrame .&. 1) `shiftL` 4)
-          .|. ((firstPartSize' .&. 0x7FFFF) `shiftL` 5)
+          .|. (firstPartSize' `shiftL` 5)
 
       byte0 = fromIntegral (tag .&. 0xFF) :: Word8
       byte1 = fromIntegral ((tag `shiftR` 8) .&. 0xFF) :: Word8

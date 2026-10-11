@@ -73,29 +73,32 @@ decodeVP8LImage width height reader = do
 
 -- | Read all transforms, returning the effective width (may be reduced by color-indexing bundling)
 readTransforms :: Int -> Int -> BitReader -> Either String ([VP8LTransform], Int, BitReader)
-readTransforms width height reader = go [] width reader
+readTransforms width height reader = go [] width (0 :: Word8) reader
   where
-    go !acc !w !r = do
+    go !acc !w !seen !r = do
       let (hasTransform, r1) = readBit r
       if not hasTransform
         then return (reverse acc, w, r1)
         else do
-          (transform, r2) <- readTransform w height r1
+          let (transformType, r2) = readBits 2 r1
+              typeIndex = fromIntegral transformType
+          when (testBit seen typeIndex) $
+            Left $
+              "Duplicate VP8L transform type: " ++ show transformType
+          (transform, r3) <- readTransform w height transformType r2
           -- Color-indexing with bundling reduces the effective image width
           let w' = case transform of
                 TransformColorIndex _ wb
                   | wb > 0 -> (w + (1 `shiftL` wb) - 1) `shiftR` wb
                 _ -> w
-          go (transform : acc) w' r2
+          go (transform : acc) w' (setBit seen typeIndex) r3
 
--- | Read a single transform
-readTransform :: Int -> Int -> BitReader -> Either String (VP8LTransform, BitReader)
-readTransform width height reader = do
-  let (transformType, reader1) = readBits 2 reader
-
+-- | Read a single transform's payload after validating its type.
+readTransform :: Int -> Int -> Word32 -> BitReader -> Either String (VP8LTransform, BitReader)
+readTransform width height transformType reader = do
   case transformType of
     0 -> do
-      let (sizeBitsRaw, reader2) = readBits 3 reader1
+      let (sizeBitsRaw, reader2) = readBits 3 reader
           sizeBits = sizeBitsRaw + 2 -- spec: size_bits = ReadBits(3) + 2
           blockSize = 1 `shiftL` fromIntegral sizeBits
           transformWidth = (width + blockSize - 1) `shiftR` fromIntegral sizeBits
@@ -105,7 +108,7 @@ readTransform width height reader = do
 
       return (TransformPredictor (fromIntegral sizeBits) transformData, reader3)
     1 -> do
-      let (sizeBitsRaw, reader2) = readBits 3 reader1
+      let (sizeBitsRaw, reader2) = readBits 3 reader
           sizeBits = sizeBitsRaw + 2 -- spec: size_bits = ReadBits(3) + 2
           blockSize = 1 `shiftL` fromIntegral sizeBits
           transformWidth = (width + blockSize - 1) `shiftR` fromIntegral sizeBits
@@ -114,9 +117,9 @@ readTransform width height reader = do
       (transformData, reader3) <- decodeSubresolutionImage transformWidth transformHeight reader2
 
       return (TransformColor (fromIntegral sizeBits) transformData, reader3)
-    2 -> return (TransformSubGreen, reader1)
+    2 -> return (TransformSubGreen, reader)
     3 -> do
-      let (numColors, reader2) = readBits 8 reader1
+      let (numColors, reader2) = readBits 8 reader
           paletteSize = fromIntegral numColors + 1
 
       (paletteData, reader3) <- decodeSubresolutionImage paletteSize 1 reader2
