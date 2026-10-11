@@ -291,7 +291,6 @@ decodeVP8 bs = do
                   -- Continue to next macroblock with updated decoders and NZ state
                   let !coeffDecs' = coeffDecs V.// [(partIdx, coeffDecAfterMB)]
                   decodeMacroblocks mbY (mbX + 1) modeDecAfterMB coeffDecs' lY0' lY1' lY2' lY3' lU0' lU1' lV0' lV1' lDC' lBM0' lBM1' lBM2' lBM3'
-
               where
                 -- Skip follows the optional segment ID in partition 0.
                 (segId, modeDec0) = case segReadInfo of

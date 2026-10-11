@@ -75,8 +75,8 @@ encodeAnimFrame quality frame =
            in alphChunk <> vp8Chunk
         _ -> error "Unsupported image format for animation encoding"
    in -- Validate before RGBA conversion or alpha extraction touches pixel data.
-      validateVP8Dimensions (dynamicMap imageWidth $ frameImage frame) (dynamicMap imageHeight $ frameImage frame)
-        `seq` makeANMFChunk frame imageChunk
+      validateVP8Dimensions (dynamicMap imageWidth $ frameImage frame) (dynamicMap imageHeight $ frameImage frame) `seq`
+        makeANMFChunk frame imageChunk
 
 -- | Create ANIM chunk
 makeANIMChunk :: Word32 -> Word16 -> B.ByteString

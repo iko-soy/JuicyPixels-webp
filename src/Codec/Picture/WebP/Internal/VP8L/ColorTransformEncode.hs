@@ -129,7 +129,6 @@ applyForwardTransform tpx pixel =
       !g2r = toSignedChannel tpx -- blue byte = green_to_red
       !g2b = toSignedChannel (tpx `shiftR` 8) -- green byte = green_to_blue
       !r2b = toSignedChannel (tpx `shiftR` 16) -- red byte = red_to_blue
-
       !a = (pixel `shiftR` 24) .&. 0xFF
       !r = fromIntegral ((pixel `shiftR` 16) .&. 0xFF) :: Int
       !g = fromIntegral ((pixel `shiftR` 8) .&. 0xFF) :: Int
@@ -138,7 +137,6 @@ applyForwardTransform tpx pixel =
       -- Signed versions for delta computation
       !gSigned = if g >= 128 then g - 256 else g
       !rSigned = if r >= 128 then r - 256 else r -- forward uses ORIGINAL red
-
       !newRed = (r - colorTransformDelta g2r gSigned) .&. 0xFF
       !newBlue = (b - colorTransformDelta g2b gSigned - colorTransformDelta r2b rSigned) .&. 0xFF
    in (a `shiftL` 24)
