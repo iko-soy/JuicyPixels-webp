@@ -13,7 +13,9 @@ spec = do
   describe "Edge Cases and Boundary Conditions" $ do
     describe "VP8 partition validation" $ do
       it "rejects an empty first partition without throwing" $
-        expectInvalidVP8 (generateUncompressedHeader 16 16 0)
+        -- Construct the malformed header directly: the encoder rejects
+        -- an empty first partition before it can produce these bytes.
+        expectInvalidVP8 (B.pack [0x10, 0, 0, 0x9d, 0x01, 0x2a, 16, 0, 16, 0])
 
       it "rejects a first partition longer than the remaining data" $
         -- Valid skipped B_PRED mode data occupies nine bytes, but the
@@ -249,7 +251,7 @@ spec = do
                   50 -- 50ms per frame
                   0
                   0
-              | i <- [0 .. 19]
+                | i <- [0 .. 19]
               ]
             encoded = encodeWebPAnimation frames 16 16 80
 
@@ -264,7 +266,7 @@ spec = do
                   (i * 100)
                   0
                   0
-              | i <- [1 .. 5]
+                | i <- [1 .. 5]
               ]
             encoded = encodeWebPAnimation frames 16 16 80
 
@@ -383,7 +385,7 @@ computeMSE orig decoded =
                 dg = fromIntegral g1 - fromIntegral g2 :: Double
                 db = fromIntegral b1 - fromIntegral b2 :: Double
              in dr * dr + dg * dg + db * db
-          | y <- [0 .. h - 1],
-            x <- [0 .. w - 1]
+            | y <- [0 .. h - 1],
+              x <- [0 .. w - 1]
           ]
    in sumSqErr / (fromIntegral (w * h * 3))
