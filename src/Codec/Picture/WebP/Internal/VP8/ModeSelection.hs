@@ -341,7 +341,7 @@ selectIntra16x16ModeRDO ::
   Int -> -- aboveDcNz, leftDcNz (Y2 DC NZ context)
   ST s (Int, Int) -- (mode, rdCost)
 selectIntra16x16ModeRDO yOrig yRecon stride mbX mbY dqFactors lambda actScale coeffProbs aNzY0 aNzY1 aNzY2 aNzY3 lNzY0 lNzY1 lNzY2 lNzY3 aDcNz lDcNz = do
-  predBuf <- VSM.clone yRecon
+  predBuf <- VSM.new (16 * 16)
   y2DCs <- VSM.new 16
   residuals <- VSM.new 16
   dctStore <- VSM.new (16 * 16)
@@ -354,7 +354,7 @@ selectIntra16x16ModeRDO yOrig yRecon stride mbX mbY dqFactors lambda actScale co
   let tryMode !mode !bestMode !bestCost
         | mode > 3 = return (bestMode, bestCost)
         | otherwise = do
-            predict16x16 mode predBuf stride mbX mbY
+            predict16x16Block mode yRecon stride mbX mbY predBuf
 
             -- First pass: compute residuals, DCT, collect DCs
             let collectDC !bi
@@ -370,7 +370,7 @@ selectIntra16x16ModeRDO yOrig yRecon stride mbX mbY dqFactors lambda actScale co
                                       | otherwise = do
                                           let !idx = (mbY + subY + r) * stride + (mbX + subX + c)
                                           !o <- VSM.unsafeRead yOrig idx
-                                          !p <- VSM.unsafeRead predBuf idx
+                                          !p <- VSM.unsafeRead predBuf ((subY + r) * 16 + subX + c)
                                           VSM.unsafeWrite residuals (r * 4 + c) (fromIntegral o - fromIntegral p :: Int16)
                                           fillCol (c + 1)
                                 fillCol 0
@@ -451,7 +451,7 @@ selectIntra16x16ModeRDO yOrig yRecon stride mbX mbY dqFactors lambda actScale co
                       dequantizeBlock dqFactors 0 residuals
                       VSM.unsafeWrite residuals 0 (reconDCsV VS.! bi)
                       idct4x4 residuals
-                      !blockSSE <- computeBlockSSEM yOrig predBuf residuals stride (mbX + subX) (mbY + subY) psyRdStr
+                      !blockSSE <- computeBlockSSEM yOrig predBuf residuals stride (mbX + subX) (mbY + subY) 16 subX subY psyRdStr
                       processBlock (bi + 1) (sse + blockSSE) (rateCost + blockBitCost)
 
             processBlock 0 0 y2BitCost
@@ -574,7 +574,7 @@ selectBPredModeRDO yOrig yRecon stride mbX mbY dqFactors lambda actScale coeffPr
                       !blockBitCost <- coeffBlockCost residuals coeffProbs 3 ctx 0
                       dequantizeBlock dqFactors 3 residuals
                       idct4x4 residuals
-                      !sse <- computeBlockSSEM yOrig yRecon residuals stride subX subY psyRdStr
+                      !sse <- computeBlockSSEM yOrig yRecon residuals stride subX subY stride subX subY psyRdStr
 
                       let !modeBitCost = bSubModeCost aboveMode leftMode m
                           !cost = sse + (lambda * (blockBitCost + modeBitCost)) `div` 256
@@ -655,15 +655,15 @@ selectChromaModeRDO ::
   Int -> -- leftNzV[0..1]
   ST s (Int, Int) -- (mode, rdCost)
 selectChromaModeRDO uOrig uRecon vOrig vRecon stride x y dqFactors lambda actScale coeffProbs aNzU0 aNzU1 aNzV0 aNzV1 lNzU0 lNzU1 lNzV0 lNzV1 = do
-  uPredBuf <- VSM.clone uRecon
-  vPredBuf <- VSM.clone vRecon
+  uPredBuf <- VSM.new (8 * 8)
+  vPredBuf <- VSM.new (8 * 8)
   residuals <- VSM.new 16
 
   let tryMode !mode !bestMode !bestCost
         | mode > 3 = return (bestMode, bestCost)
         | otherwise = do
-            predict8x8 mode uPredBuf stride x y
-            predict8x8 mode vPredBuf stride x y
+            predict8x8Block mode uRecon stride x y uPredBuf
+            predict8x8Block mode vRecon stride x y vPredBuf
             (!sseU, !bitCostU) <- trialEncodeChroma8x8 uOrig uPredBuf residuals stride x y dqFactors lambda actScale coeffProbs aNzU0 aNzU1 lNzU0 lNzU1
             (!sseV, !bitCostV) <- trialEncodeChroma8x8 vOrig vPredBuf residuals stride x y dqFactors lambda actScale coeffProbs aNzV0 aNzV1 lNzV0 lNzV1
             let !modeBitCost = uvModeCost mode
@@ -711,7 +711,7 @@ trialEncodeChroma8x8 chromaOrig predBuf residuals stride x y dqFactors _lambda a
                         | otherwise = do
                             let !idx = (y + subY + r) * stride + (x + subX + c)
                             !o <- VSM.unsafeRead chromaOrig idx
-                            !p <- VSM.unsafeRead predBuf idx
+                            !p <- VSM.unsafeRead predBuf ((subY + r) * 8 + subX + c)
                             VSM.unsafeWrite residuals (r * 4 + c) (fromIntegral o - fromIntegral p :: Int16)
                             fillCol (c + 1)
                   fillCol 0
@@ -726,7 +726,7 @@ trialEncodeChroma8x8 chromaOrig predBuf residuals stride x y dqFactors _lambda a
         !blockBitCost <- coeffBlockCost residuals coeffProbs 2 ctx 0
         dequantizeBlock dqFactors 2 residuals
         idct4x4 residuals
-        !blockSSE <- computeBlockSSEM chromaOrig predBuf residuals stride (x + subX) (y + subY) 0
+        !blockSSE <- computeBlockSSEM chromaOrig predBuf residuals stride (x + subX) (y + subY) 8 subX subY 0
         return (if hasNz then 1 else 0 :: Int, blockBitCost, blockSSE)
   -- 2x2 layout: bi 0 1 / 2 3. Propagate NZ within the MB as the real encoder does.
   (!nz0, !r0, !s0) <- doBlock 0 aNz0 lNz0
@@ -761,12 +761,15 @@ computeBlockSSEM ::
   VSM.MVector s Word8 -> -- Original pixels
   VSM.MVector s Word8 -> -- Prediction pixels
   VSM.MVector s Int16 -> -- IDCT output (reconstruction residuals)
-  Int -> -- Stride
-  Int -> -- X position
-  Int -> -- Y position
+  Int -> -- Original plane stride
+  Int -> -- Original X position
+  Int -> -- Original Y position
+  Int -> -- Prediction stride
+  Int -> -- Prediction X position
+  Int -> -- Prediction Y position
   Int -> -- Psy-visual strength (0 to disable, e.g., for chroma)
   ST s Int
-computeBlockSSEM orig predBuf idctOut stride x y psyStr = do
+computeBlockSSEM orig predBuf idctOut stride x y predStride predX predY psyStr = do
   let go !r !sse !sumO !sumO2 !sumR !sumR2
         | r >= 4 = return (sse, sumO, sumO2, sumR, sumR2)
         | otherwise = do
@@ -775,7 +778,7 @@ computeBlockSSEM orig predBuf idctOut stride x y psyStr = do
                   | otherwise = do
                       let !idx = (y + r) * stride + (x + c)
                       !o <- VSM.unsafeRead orig idx
-                      !p <- VSM.unsafeRead predBuf idx
+                      !p <- VSM.unsafeRead predBuf ((predY + r) * predStride + predX + c)
                       !res <- VSM.unsafeRead idctOut (r * 4 + c)
                       let !oi = fromIntegral o :: Int
                           !recon = clip255 (fromIntegral p + fromIntegral res)

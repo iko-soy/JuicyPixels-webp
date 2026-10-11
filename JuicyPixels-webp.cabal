@@ -101,6 +101,7 @@ library
       Paths_JuicyPixels_webp
   hs-source-dirs:
       src
+  ghc-options: -O2
   build-depends:
       JuicyPixels
     , base >=4.7 && <5
@@ -132,6 +133,7 @@ test-suite JuicyPixels-webp-test
       ImageDecodingSpec
       LoopFilterSpec
       LZ77Spec
+      PredictionBufferSpec
       PrefixCodeSpec
       PropertyExtendedSpec
       PropertySpec

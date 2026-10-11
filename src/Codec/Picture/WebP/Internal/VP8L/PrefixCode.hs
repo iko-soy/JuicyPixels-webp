@@ -10,7 +10,7 @@ module Codec.Picture.WebP.Internal.VP8L.PrefixCode
 where
 
 import Codec.Picture.WebP.Internal.BitReader
-import Control.Monad (forM_, when)
+import Control.Monad (foldM, forM_, when)
 import Control.Monad.ST
 import Data.Bits
 import qualified Data.Vector as V
@@ -99,9 +99,21 @@ buildPrefixCodeTable codeLengths = runST $ do
 
   -- No need to reset offset - we'll read directly from sorted array using symbolIdx counter
 
-  -- Step 3: Allocate table (start with primary + generous secondary space)
-  let maxTableSize = primarySize + 32768 -- Generous allocation
-  table <- VUM.replicate maxTableSize invalidEntry
+  -- Step 3: Size the table from the validated, complete code tree. Each short
+  -- code covers 2^(primaryBits - len) primary entries; every remaining entry
+  -- needs exactly one secondary table. Secondary tables use the same width
+  -- as calculateSecondaryTableBits below.
+  primaryEntriesUsed <-
+    foldM
+      ( \used len -> do
+          count <- VUM.read blCount len
+          return $! used + (count `shiftL` (primaryBits - len))
+      )
+      0
+      [1 .. primaryBits]
+  let secondarySize = if maxCodeLength > primaryBits then 1 `shiftL` (maxCodeLength - primaryBits) else 0
+      tableSize = primarySize + (primarySize - primaryEntriesUsed) * secondarySize
+  table <- VUM.replicate tableSize invalidEntry
 
   nextTablePos <- VUM.new 1
   VUM.write nextTablePos 0 primarySize
@@ -252,13 +264,8 @@ buildPrefixCodeTable codeLengths = runST $ do
             let idx = secondaryOffset + revLong + (i `shiftL` longBits)
             VUM.write table idx entry
 
-  -- Determine actual table size used
-  actualSize <- VUM.read nextTablePos 0
-
-  -- Freeze and truncate to actual size
-  frozenTable <- VU.unsafeFreeze table
-  let finalTable = VU.take actualSize frozenTable
-
+  -- The backing array is already exactly sized; freezing retains no unused tail.
+  finalTable <- VU.unsafeFreeze table
   return $ Right $ PrefixCodeTable finalTable primaryBits
 
 -- | Calculate the number of bits needed for a secondary table

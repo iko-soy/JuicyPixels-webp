@@ -4,6 +4,8 @@ module Codec.Picture.WebP.Internal.VP8.Predict
   ( predict16x16,
     predict8x8,
     predict4x4,
+    predict16x16Block,
+    predict8x8Block,
   )
 where
 
@@ -30,6 +32,46 @@ predict8x8 mode output stride x y
   | mode == 1 = predict8x8V output stride x y
   | mode == 2 = predict8x8H output stride x y
   | mode == 3 = predict8x8TM output stride x y
+  | otherwise = return ()
+
+-- | Predict a 16x16 luma block into a separate, tightly packed 256-byte buffer.
+-- The reconstruction plane supplies the neighboring pixels and is not modified.
+predict16x16Block :: Int -> VSM.MVector s Word8 -> Int -> Int -> Int -> VSM.MVector s Word8 -> ST s ()
+predict16x16Block = predictBlock 16
+
+-- | Predict an 8x8 chroma block into a separate, tightly packed 64-byte buffer.
+-- Frame-edge availability is determined from the original plane coordinates.
+predict8x8Block :: Int -> VSM.MVector s Word8 -> Int -> Int -> Int -> VSM.MVector s Word8 -> ST s ()
+predict8x8Block = predictBlock 8
+
+-- Only the top and left borders participate in these four prediction modes.
+-- Keeping the result separate avoids copying the full reconstruction plane.
+predictBlock :: Int -> Int -> VSM.MVector s Word8 -> Int -> Int -> Int -> VSM.MVector s Word8 -> ST s ()
+predictBlock size mode source stride x y output
+  | mode == 0 = do
+      topSum <- if y > 0 then sumRow source stride (x, y - 1) size else return 0
+      leftSum <- if x > 0 then sumCol source stride (x - 1, y) size else return 0
+      let !dc
+            | x > 0 && y > 0 = (topSum + leftSum + size) `div` (2 * size)
+            | x > 0 || y > 0 = (topSum + leftSum + size `div` 2) `div` size
+            | otherwise = 128
+      VSM.set output (fromIntegral dc)
+  | mode == 1 =
+      forM_ [0 .. size - 1] $ \col -> do
+        above <- readPixel source stride (x + col) (y - 1)
+        forM_ [0 .. size - 1] $ \row ->
+          VSM.write output (row * size + col) above
+  | mode == 2 =
+      forM_ [0 .. size - 1] $ \row -> do
+        left <- readPixel source stride (x - 1) (y + row)
+        VSM.set (VSM.slice (row * size) size output) left
+  | mode == 3 = do
+      topLeft <- readPixel source stride (x - 1) (y - 1)
+      forM_ [0 .. size - 1] $ \row -> do
+        left <- readPixel source stride (x - 1) (y + row)
+        forM_ [0 .. size - 1] $ \col -> do
+          above <- readPixel source stride (x + col) (y - 1)
+          VSM.write output (row * size + col) (clip255 (fromIntegral above + fromIntegral left - fromIntegral topLeft))
   | otherwise = return ()
 
 -- | 4x4 luma sub-block prediction (10 modes)

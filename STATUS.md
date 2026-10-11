@@ -6,6 +6,11 @@ Pure Haskell WebP codec for JuicyPixels. Supports both decoding and encoding.
 **Tests:** Functional, interoperability, property, quality, and stress suites;
 see `test/TestNotes.md` for validation commands and regression coverage.
 
+**Performance:** Optimized library builds, compact VP8 prediction buffers,
+early termination of maximum-length LZ77 searches, and compact Huffman tables
+are implemented. Component benchmarks now use production code; see
+`PERFORMANCE.md` for details and validation.
+
 ---
 
 ## Fully Implemented Features

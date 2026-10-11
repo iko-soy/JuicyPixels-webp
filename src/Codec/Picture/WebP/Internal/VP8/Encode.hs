@@ -792,11 +792,11 @@ encodeYBlocks ::
   ST s (BoolEncoder, Bool, Bool, Int, Int, Int, Int, DeferredStats)
 -- Returns: (encoder, y2nz, anyYNz, leftNzY0..3, deferred stats)
 encodeYBlocks yOrig yRecon stride x y predMode dequantFactors lambda actScale coeffProbs enc aboveNzY mbX leftNzY0 leftNzY1 leftNzY2 leftNzY3 aboveDcNz leftDcNz mStats = do
-  -- Create temporary buffer for prediction (don't overwrite reconstruction yet)
-  predBuf <- VSM.clone yRecon
+  -- Only the current macroblock needs prediction storage.
+  predBuf <- VSM.new (16 * 16)
 
   -- Apply prediction to temporary buffer
-  predict16x16 predMode predBuf stride x y
+  predict16x16Block predMode yRecon stride x y predBuf
 
   -- Collect 16 Y block DCs for Y2 by doing forward DCT on all blocks
   y2DCs <- VSM.new 16
@@ -822,7 +822,7 @@ encodeYBlocks yOrig yRecon stride x y predMode dequantFactors lambda actScale co
             py = y + subY + row
             idx = py * stride + px
         orig <- VSM.read yOrig idx
-        pred <- VSM.read predBuf idx
+        pred <- VSM.read predBuf ((subY + row) * 16 + subX + col)
         let residual = fromIntegral orig - fromIntegral pred :: Int16
         VSM.write residuals (row * 4 + col) residual
 
@@ -975,7 +975,7 @@ encodeYBlocks yOrig yRecon stride x y predMode dequantFactors lambda actScale co
         let px = x + subX + col
             py = y + subY + row
             idx = py * stride + px
-        pred <- VSM.read predBuf idx
+        pred <- VSM.read predBuf ((subY + row) * 16 + subX + col)
         res <- VSM.read residuals (row * 4 + col)
         let reconstructed = clip255 (fromIntegral pred + fromIntegral res)
         VSM.write yRecon idx reconstructed
@@ -1132,11 +1132,11 @@ encodeChromaBlocks ::
   ST s (BoolEncoder, Bool, Int, Int, DeferredStats)
 -- Returns: (encoder, anyChromaNz, leftNz0, leftNz1, deferred stats)
 encodeChromaBlocks chromaOrig chromaRecon stride x y predMode dequantFactors lambda actScale coeffProbs enc coeffBlockType aboveNz mbX leftNz0 leftNz1 mStats = do
-  -- Create temporary buffer for prediction
-  predBuf <- VSM.clone chromaRecon
+  -- Keep the 8x8 prediction separate from the reconstruction plane.
+  predBuf <- VSM.new (8 * 8)
 
   -- Apply prediction to temporary buffer
-  predict8x8 predMode predBuf stride x y
+  predict8x8Block predMode chromaRecon stride x y predBuf
 
   -- Read above NZ for this MB's chroma columns
   aNzCol0 <- VSM.read aboveNz (mbX * 2)
@@ -1177,7 +1177,7 @@ encodeChromaBlocks chromaOrig chromaRecon stride x y predMode dequantFactors lam
                     py = y + subY + r
                     idx = py * stride + px
                 orig <- VSM.read chromaOrig idx
-                pred <- VSM.read predBuf idx
+                pred <- VSM.read predBuf ((subY + r) * 8 + subX + c)
                 let residual = fromIntegral orig - fromIntegral pred :: Int16
                 VSM.write residuals (r * 4 + c) residual
 
@@ -1213,7 +1213,7 @@ encodeChromaBlocks chromaOrig chromaRecon stride x y predMode dequantFactors lam
                 let px = x + subX + c
                     py = y + subY + r
                     idx = py * stride + px
-                pred <- VSM.read predBuf idx
+                pred <- VSM.read predBuf ((subY + r) * 8 + subX + c)
                 res <- VSM.read residuals (r * 4 + c)
                 let reconstructed = clip255 (fromIntegral pred + fromIntegral res)
                 VSM.write chromaRecon idx reconstructed

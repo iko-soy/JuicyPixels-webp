@@ -1,5 +1,15 @@
 # Test Suite Notes
 
+## Performance regression coverage
+
+`PredictionBufferSpec` compares compact 8x8 and 16x16 predictions with the
+existing frame predictors for all modes, corners, edges, and interior blocks,
+plus randomized image planes. It also checks that prediction trials leave the
+source plane unchanged. `PrefixCodeSpec` checks actual backing-array sizes as
+well as decoding for short trees, 15-bit trees, and multiple secondary prefixes.
+`LZ77Spec` covers maximum-length runs, periodic ties, end-of-input tails, and
+searching past a shorter nearby match to find a longer older match.
+
 ## Codec interoperability regressions
 
 The decoder regressions in `VP8RegressionSpec`, `VP8LRegressionSpec`,
@@ -48,13 +58,12 @@ ANIM chunks when the animation flag is unset.
 Run all functional, property, quality, and stress tests with:
 
 ```bash
-stack --no-nix --lock-file read-only -j4 test --ghc-options='-O1 -fomit-interface-pragmas' --test-arguments='--jobs=2 +RTS -N2 -RTS'
+stack --no-nix --lock-file read-only -j2 test --test-arguments='--jobs=2 +RTS -N2 -RTS'
 ```
 
-This retains optimizations from dependencies such as `vector` while limiting
-large function expansions between codec modules. When changing compiler options
-on an existing build, run `stack --no-nix clean` first so older object files are
-not reused.
+The library builds with `-O2`; the trellis quantizer uses an `INLINABLE` boundary
+to keep compiler memory use manageable. Runtime capabilities are limited here
+so machines with many cores do not oversubscribe the test suite.
 
 ### Known Test Limitations
 

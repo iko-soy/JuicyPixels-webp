@@ -2,6 +2,74 @@
 
 This document describes actionable performance improvements for the JuicyPixels-webp codec. Improvements are prioritized by impact and implementation effort.
 
+## Compiler, prediction, and table allocation updates
+
+The library now builds with `-O2` from `package.yaml`; `stack.yaml` no longer
+overrides every local component with `-O0`. The large trellis quantizer uses
+`INLINABLE` rather than forced `INLINE` to contain compiler work when optimizing
+its callers.
+
+The active VP8 encoder uses separate 256-byte luma and 64-byte chroma prediction
+buffers. Prediction reads neighbors from the reconstruction plane using the
+original frame coordinates, preserving the top/left border rules. Previously,
+mode selection and final encoding cloned entire planes for each macroblock:
+for `N` padded pixels and `M = N / 256` macroblocks, this copied between
+`2 * N * M` and `3 * N * M` bytes per encoding pass. The prediction storage now
+scales with block size instead of image size.
+
+An isolated GHC 9.10.3 `-O2` check evaluated all four luma prediction modes for
+every macroblock and consumed every predicted pixel. At 1024x1024, allocated
+bytes fell from 4,335,322,912 with full-plane clones to 18,286,432 with compact
+buffers (99.6% less for this stage), with the same output checksum.
+
+VP8L match search stops when the current match reaches the maximum possible
+length, including the shorter limit at the end of an image. Equal-length
+matches still keep the nearest candidate. Huffman construction now sizes its
+backing array from the validated code-length histogram: 256 primary entries,
+plus one secondary table for each primary prefix not covered by a short code.
+Short-code tables retain 1 KiB instead of 129 KiB; long-code tables keep only
+their required secondary tables.
+
+The component benchmarks call the production color converters, frame loop
+filters, and inverse transforms. Inputs are prepared before timing, and filter
+buffers are reset by copying the input on every invocation. Writer benchmarks
+pass the work count as the measured argument to avoid sharing a completed
+result. Dedicated LZ77 and Huffman construction groups cover these changes.
+
+Run the optimized suite with one runtime capability for comparable timings:
+
+```bash
+stack bench --benchmark-arguments='-m prefix components +RTS -N1 -RTS'
+stack bench --benchmark-arguments='-m prefix encode +RTS -N1 -RTS'
+```
+
+Component timings and allocation reductions are workload-specific and do not
+establish an end-to-end codec speedup. The estimates below describe older work.
+
+### Validation
+
+The optimized build passes all 663 tests and a one-iteration smoke run of all
+79 benchmarks. A separate comparison produced byte-identical output for 56
+lossy and 16 lossless encodings spanning frame borders, odd dimensions, solid
+colors, gradients, noise, and checkerboards.
+
+For an end-to-end comparison of the VP8 buffer change, both builds used GHC
+9.10.3, `-O2`, the same `INLINABLE` quantizer boundary, and one runtime capability.
+The reference otherwise used codec source from commit `36a5b41`. Three alternating
+fresh-process runs encoded generated RGB gradients at quality 50; input
+generation was excluded. CPU figures are medians and allocation is total bytes
+allocated per encode, expressed in decimal GB. Output lengths and checksums
+matched in every run.
+
+| Image | CPU before | CPU after | Allocated before | Allocated after |
+|-------|------------|-----------|------------------|-----------------|
+| 512x512 | 5.225 s | 5.050 s | 3.547 GB | 1.916 GB |
+| 1024x1024 | 21.721 s | 20.254 s | 33.517 GB | 7.665 GB |
+
+These measurements isolate the source changes from the separate benefit of
+enabling compiler optimization. The 1024x1024 case used 77% less allocation and
+7% less CPU time; other image content and dimensions can behave differently.
+
 ## Summary
 
 | Improvement | Files | Est. Impact | Effort | Priority | Status |
