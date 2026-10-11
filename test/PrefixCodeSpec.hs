@@ -10,7 +10,11 @@ import Control.Monad (forM_)
 import Data.Bits
 import qualified Data.ByteString as B
 import qualified Data.List
+import Data.Primitive.ByteArray (sizeofByteArray)
+import qualified Data.Vector.Primitive as VP
 import qualified Data.Vector.Unboxed as VU
+import qualified Data.Vector.Unboxed.Base as VUB
+import Data.Word (Word32)
 import Test.Hspec
 
 spec :: Spec
@@ -34,6 +38,12 @@ spec = describe "PrefixCode" $ do
         Left _ -> expectationFailure "Should build code"
         Right (PrefixCodeTable _ _) -> return ()
         Right _ -> expectationFailure "Expected table code"
+
+    it "retains only the primary table for short codes" $ do
+      forM_ [VU.fromList [1, 1], VU.fromList [1, 2, 3, 3], VU.replicate 256 8] $ \lengths ->
+        case buildPrefixCode lengths of
+          Right code -> expectCompactTable 256 code
+          Left err -> expectationFailure err
 
     it "rejects empty code lengths" $ do
       let lengths = VU.fromList []
@@ -92,18 +102,46 @@ spec = describe "PrefixCode" $ do
             check code r' rest
       case buildPrefixCode lengths of
         Left err -> expectationFailure err
-        Right code -> check code reader [0 .. 15]
+        Right code -> do
+          expectCompactTable 384 code
+          check code reader [0 .. 15]
 
     it "decodes all 9-bit codes across multiple secondary tables" $ do
       -- With 512 equally long codes, each symbol is its canonical code value.
       case buildPrefixCode (VU.replicate 512 9) of
         Left err -> expectationFailure err
-        Right code -> forM_ [0 .. 511] $ \expected -> do
-          let writer = writeBitsReversed 9 expected emptyBitWriter
-              reader = initBitReader $ bitWriterToByteString $ finalizeBitWriter writer
-              (actual, reader') = decodeSymbol code reader
-          actual `shouldBe` fromIntegral expected
-          getBitPosition reader' `shouldBe` 9
+        Right code -> do
+          expectCompactTable 768 code
+          forM_ [0 .. 511] $ \expected -> do
+            let writer = writeBitsReversed 9 expected emptyBitWriter
+                reader = initBitReader $ bitWriterToByteString $ finalizeBitWriter writer
+                (actual, reader') = decodeSymbol code reader
+            actual `shouldBe` fromIntegral expected
+            getBitPosition reader' `shouldBe` 9
+
+    it "sizes and decodes multiple secondary prefixes with different depths" $ do
+      -- The first seven codes cover canonical 8-bit prefixes 0..253. Prefix
+      -- 254 has two 9-bit leaves; prefix 255 branches to the 15-bit limit.
+      let lengths = VU.fromList ([1 .. 7] ++ [9, 9] ++ [9 .. 14] ++ [15, 15])
+          codewords =
+            [(len, (1 `shiftL` len) - 2) | len <- [1 .. 7]]
+              ++ [(9, 508), (9, 509)]
+              ++ [(len, (1 `shiftL` len) - 2) | len <- [9 .. 15]]
+              ++ [(15, 32767)]
+          writer = foldl (\w (len, value) -> writeBitsReversed len value w) emptyBitWriter codewords
+          reader = initBitReader $ bitWriterToByteString $ finalizeBitWriter writer
+          check _ r [] = do
+            getBitPosition r `shouldBe` sum (map fst codewords)
+            hasReadPastEnd r `shouldBe` False
+          check code r (expected : rest) = do
+            let (actual, r') = decodeSymbol code r
+            actual `shouldBe` expected
+            check code r' rest
+      case buildPrefixCode lengths of
+        Left err -> expectationFailure err
+        Right code -> do
+          expectCompactTable 512 code
+          check code reader [0 .. 16]
 
     it "decodes single-symbol code" $ do
       let lengths = VU.fromList [0, 0, 5, 0]
@@ -210,3 +248,15 @@ spec = describe "PrefixCode" $ do
 isLeft :: Either a b -> Bool
 isLeft (Left _) = True
 isLeft (Right _) = False
+
+-- Check the backing array as well as the visible length: slicing a large
+-- vector would pass the length assertion while retaining the allocation.
+expectCompactTable :: Int -> PrefixCode -> Expectation
+expectCompactTable expectedSize (PrefixCodeTable table primaryBits) = do
+  primaryBits `shouldBe` 8
+  VU.length table `shouldBe` expectedSize
+  retainedTableBytes table `shouldBe` expectedSize * 4
+expectCompactTable _ _ = expectationFailure "Expected table code"
+
+retainedTableBytes :: VU.Vector Word32 -> Int
+retainedTableBytes (VUB.V_Word32 (VP.Vector _ _ bytes)) = sizeofByteArray bytes

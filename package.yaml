@@ -21,6 +21,8 @@ dependencies:
 
 library:
   source-dirs: src
+  ghc-options:
+    - -O2
 
 tests:
   JuicyPixels-webp-test:

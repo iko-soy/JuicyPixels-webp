@@ -12,17 +12,24 @@ import Codec.Picture.WebP.Internal.BitWriter
 import Codec.Picture.WebP.Internal.Container
 import Codec.Picture.WebP.Internal.VP8.BoolDecoder
 import Codec.Picture.WebP.Internal.VP8.BoolEncoder
+import Codec.Picture.WebP.Internal.VP8.ColorConvert (rgbToYCbCr, rgbToYCbCrSharp)
 import Codec.Picture.WebP.Internal.VP8.DCT
 import Codec.Picture.WebP.Internal.VP8.IDCT
+import Codec.Picture.WebP.Internal.VP8.LoopFilter (applyLoopFilterFrame)
+import Codec.Picture.WebP.Internal.VP8L.LZ77Encode (Token, lz77Compress)
+import Codec.Picture.WebP.Internal.VP8L.PrefixCode (PrefixCode (..), buildPrefixCode)
+import Codec.Picture.WebP.Internal.VP8L.Transform (VP8LTransform (..), applyInverseTransforms)
 import Control.DeepSeq
-import Control.Monad (forM_, replicateM, when)
+import Control.Exception (evaluate)
+import Control.Monad (replicateM)
 import Control.Monad.ST
 import Criterion.Main
 import Data.Bits
 import qualified Data.ByteString as B
 import Data.Int (Int16)
+import qualified Data.Vector as V
 import qualified Data.Vector.Storable as VS
-import qualified Data.Vector.Storable.Mutable as VSM
+import qualified Data.Vector.Unboxed as VU
 import Data.Word
 import System.Directory (doesFileExist)
 
@@ -95,7 +102,8 @@ encodeEndToEndBenchmarks =
           [ bench "32x32" $ nf (encodeWebPLossy' 50) (generateTestImageRGB 32 32),
             bench "64x64" $ nf (encodeWebPLossy' 50) (generateTestImageRGB 64 64),
             bench "128x128" $ nf (encodeWebPLossy' 50) (generateTestImageRGB 128 128),
-            bench "256x256" $ nf (encodeWebPLossy' 50) (generateTestImageRGB 256 256)
+            bench "256x256" $ nf (encodeWebPLossy' 50) (generateTestImageRGB 256 256),
+            bench "512x512" $ nf (encodeWebPLossy' 50) (generateTestImageRGB 512 512)
           ],
         bgroup "quality-sweep-128x128" $
           [ bench "q10" $ nf (encodeWebPLossy' 10) (generateTestImageRGB 128 128),
@@ -125,7 +133,9 @@ componentBenchmarks =
     bgroup "loop-filter" loopFilterBenchmarks,
     bgroup "bool-decoder" boolDecoderBenchmarks,
     bgroup "bool-encoder" boolEncoderBenchmarks,
-    bgroup "transform" transformBenchmarks
+    bgroup "transform" transformBenchmarks,
+    bgroup "lz77" lz77Benchmarks,
+    bgroup "prefix-code" prefixCodeBenchmarks
   ]
 
 -- | BitReader benchmarks
@@ -151,17 +161,16 @@ bitReaderBenchmarks =
 -- | BitWriter benchmarks
 bitWriterBenchmarks :: [Benchmark]
 bitWriterBenchmarks =
-  [ bench "empty" $ whnf (\_ -> emptyBitWriter) (),
-    bench "writeBits-8-1000" $ nf (writeBitsN 8 1000) (),
-    bench "writeBits-14-1000" $ nf (writeBitsN 14 1000) (),
+  [ bench "writeBits-8-1000" $ nf (writeBitsN 8) 1000,
+    bench "writeBits-14-1000" $ nf (writeBitsN 14) 1000,
     bench "writeBit-10000" $ nf writeBitN 10000
   ]
   where
     finalize :: BitWriter -> B.ByteString
     finalize = bitWriterToByteString . finalizeBitWriter
 
-    writeBitsN :: Int -> Int -> () -> B.ByteString
-    writeBitsN numBits n _ = finalize $ go n emptyBitWriter
+    writeBitsN :: Int -> Int -> B.ByteString
+    writeBitsN numBits n = finalize $ go n emptyBitWriter
       where
         go 0 w = w
         go i w = go (i - 1) (writeBits numBits 0xAB w)
@@ -256,127 +265,58 @@ idctBenchmarks =
       stToIO $ iwht4x4 result
       VS.freeze result
 
--- | Color conversion benchmarks (YCbCr <-> RGB simulation)
+-- | Benchmark the production RGB-to-YCbCr converters, including their output
+-- allocation. Inputs are prepared before timing; each call creates new planes.
 colorConvertBenchmarks :: [Benchmark]
 colorConvertBenchmarks =
-  [ bench "ycbcr-to-rgb-single" $ nf ycbcrToRGBSingle (128, 64, 192),
-    bench "ycbcr-to-rgb-row-16" $ nfIO $ runColorConvertRow 16,
-    bench "ycbcr-to-rgb-row-256" $ nfIO $ runColorConvertRow 256,
-    bench "ycbcr-to-rgb-block-16x16" $ nfIO $ runColorConvertBlock 16 16,
-    bench "ycbcr-to-rgb-block-256x256" $ nfIO $ runColorConvertBlock 256 256
+  [ env (evaluate $ force $ generateTestImageRGB size size) $ \img ->
+      bgroup
+        (show size ++ "x" ++ show size)
+        [ bench "box" $ nf (convertRGB False) img,
+          bench "sharp" $ nf (convertRGB True) img
+        ]
+  | size <- [16, 256]
   ]
   where
-    -- BT.601 YCbCr to RGB conversion (matching VP8 spec)
-    ycbcrToRGBSingle :: (Word8, Word8, Word8) -> (Word8, Word8, Word8)
-    ycbcrToRGBSingle (y, cb, cr) =
-      let y' = fromIntegral y :: Int
-          cb' = fromIntegral cb - 128 :: Int
-          cr' = fromIntegral cr - 128 :: Int
-          r = clip255 (y' + ((91881 * cr') `shiftR` 16))
-          g = clip255 (y' - ((22554 * cb' + 46802 * cr') `shiftR` 16))
-          b = clip255 (y' + ((116130 * cb') `shiftR` 16))
-       in (r, g, b)
+    convertRGB :: Bool -> Image PixelRGB8 -> YUVPlanes
+    convertRGB sharp img = runST $ do
+      (y, u, v) <- if sharp then rgbToYCbCrSharp img else rgbToYCbCr img
+      (,,) <$> VS.unsafeFreeze y <*> VS.unsafeFreeze u <*> VS.unsafeFreeze v
 
-    clip255 :: Int -> Word8
-    clip255 x
-      | x < 0 = 0
-      | x > 255 = 255
-      | otherwise = fromIntegral x
+type YUVPlanes = (VS.Vector Word8, VS.Vector Word8, VS.Vector Word8)
 
-    runColorConvertRow :: Int -> IO (VS.Vector Word8)
-    runColorConvertRow width = do
-      let yData = VS.replicate width (128 :: Word8)
-          cbData = VS.replicate (width `div` 2) (64 :: Word8)
-          crData = VS.replicate (width `div` 2) (192 :: Word8)
-      rgbBuf <- VSM.new (width * 3)
-      stToIO $ forM_ [0 .. width - 1] $ \x -> do
-        let y = yData VS.! x
-            cb = cbData VS.! (x `div` 2)
-            cr = crData VS.! (x `div` 2)
-            (r, g, b) = ycbcrToRGBSingle (y, cb, cr)
-        VSM.write rgbBuf (x * 3) r
-        VSM.write rgbBuf (x * 3 + 1) g
-        VSM.write rgbBuf (x * 3 + 2) b
-      VS.freeze rgbBuf
+type LoopFilterInput = (YUVPlanes, VU.Vector Int, VU.Vector Bool)
 
-    runColorConvertBlock :: Int -> Int -> IO (VS.Vector Word8)
-    runColorConvertBlock width height = do
-      let yData = VS.replicate (width * height) (128 :: Word8)
-          cbData = VS.replicate ((width `div` 2) * (height `div` 2)) (64 :: Word8)
-          crData = VS.replicate ((width `div` 2) * (height `div` 2)) (192 :: Word8)
-      rgbBuf <- VSM.new (width * height * 3)
-      stToIO $ forM_ [0 .. height - 1] $ \row ->
-        forM_ [0 .. width - 1] $ \col -> do
-          let idx = row * width + col
-              chromaIdx = (row `div` 2) * (width `div` 2) + (col `div` 2)
-              y = yData VS.! idx
-              cb = cbData VS.! chromaIdx
-              cr = crData VS.! chromaIdx
-              (r, g, b) = ycbcrToRGBSingle (y, cb, cr)
-          VSM.write rgbBuf (idx * 3) r
-          VSM.write rgbBuf (idx * 3 + 1) g
-          VSM.write rgbBuf (idx * 3 + 2) b
-      VS.freeze rgbBuf
-
--- | Loop filter benchmarks (simulated filter operations)
+-- | Measure the real frame filters with visible block boundaries. Thawing the
+-- immutable input on every call resets all pixels and is included in timing.
 loopFilterBenchmarks :: [Benchmark]
 loopFilterBenchmarks =
-  [ bench "normal-filter-edge" $ nfIO runNormalFilterEdge,
-    bench "simple-filter-edge" $ nfIO runSimpleFilterEdge,
-    bench "filter-macroblock-row" $ nfIO $ runFilterMacroblockRow 16
+  [ env (evaluate $ force $ filterInput width height) $ \input ->
+      bgroup
+        (show width ++ "x" ++ show height)
+        [ bench "normal" $ nf (filterFrame 0 width height) input,
+          bench "simple" $ nf (filterFrame 1 width height) input
+        ]
+  | (width, height) <- [(256, 16), (256, 256)]
   ]
   where
-    runNormalFilterEdge :: IO ()
-    runNormalFilterEdge = do
-      buf <- VSM.replicate 256 (128 :: Word8)
-      stToIO $ do
-        -- Simulate filtering a vertical edge
-        forM_ [0 .. 15] $ \row -> do
-          let baseIdx = row * 16 + 8
-          p0 <- VSM.read buf (baseIdx - 1)
-          p1 <- VSM.read buf (baseIdx - 2)
-          q0 <- VSM.read buf baseIdx
-          q1 <- VSM.read buf (baseIdx + 1)
-          -- Simple filter simulation
-          let delta = clamp3 (fromIntegral q0 - fromIntegral p0)
-          VSM.write buf (baseIdx - 1) (saturate $ fromIntegral p0 + delta)
-          VSM.write buf baseIdx (saturate $ fromIntegral q0 - delta)
-      return ()
+    filterInput :: Int -> Int -> LoopFilterInput
+    filterInput width height =
+      let plane w h = VS.generate (w * h) $ \i ->
+            fromIntegral $ 96 + 6 * (((i `mod` w) `div` 4 + (i `div` w) `div` 4) `mod` 5)
+          macroblocks = (width `div` 16) * (height `div` 16)
+       in ( (plane width height, plane (width `div` 2) (height `div` 2), plane (width `div` 2) (height `div` 2)),
+            VU.replicate macroblocks 24,
+            VU.replicate macroblocks True
+          )
 
-    runSimpleFilterEdge :: IO ()
-    runSimpleFilterEdge = do
-      buf <- VSM.replicate 256 (128 :: Word8)
-      stToIO $ do
-        forM_ [0 .. 15] $ \row -> do
-          let baseIdx = row * 16 + 8
-          p0 <- VSM.read buf (baseIdx - 1)
-          q0 <- VSM.read buf baseIdx
-          let delta = clamp3 (fromIntegral q0 - fromIntegral p0)
-          VSM.write buf (baseIdx - 1) (saturate $ fromIntegral p0 + delta)
-          VSM.write buf baseIdx (saturate $ fromIntegral q0 - delta)
-      return ()
-
-    runFilterMacroblockRow :: Int -> IO ()
-    runFilterMacroblockRow numMBs = do
-      buf <- VSM.replicate (numMBs * 16 * 16) (128 :: Word8)
-      stToIO $ forM_ [0 .. numMBs - 1] $ \mb -> do
-        -- Filter vertical edges within macroblock
-        forM_ [4, 8, 12] $ \col ->
-          forM_ [0 .. 15] $ \row -> do
-            let baseIdx = mb * 256 + row * 16 + col
-            when (baseIdx > 0 && baseIdx < numMBs * 256 - 1) $ do
-              p0 <- VSM.read buf (baseIdx - 1)
-              q0 <- VSM.read buf baseIdx
-              let delta = clamp3 (fromIntegral q0 - fromIntegral p0)
-              VSM.write buf (baseIdx - 1) (saturate $ fromIntegral p0 + delta)
-              VSM.write buf baseIdx (saturate $ fromIntegral q0 - delta)
-      return ()
-
-    clamp3 :: Int -> Int
-    clamp3 x = max (-3) (min 3 x)
-
-    saturate :: Int -> Word8
-    saturate x = fromIntegral $ max 0 (min 255 x)
+    filterFrame :: Int -> Int -> Int -> LoopFilterInput -> YUVPlanes
+    filterFrame filterType width height ((yInput, uInput, vInput), levels, inners) = runST $ do
+      y <- VS.thaw yInput
+      u <- VS.thaw uInput
+      v <- VS.thaw vInput
+      applyLoopFilterFrame filterType 0 levels inners y width u (width `div` 2) v (width `div` 2) (height `div` 16) (width `div` 16)
+      (,,) <$> VS.unsafeFreeze y <*> VS.unsafeFreeze u <*> VS.unsafeFreeze v
 
 -- | Boolean decoder benchmarks
 boolDecoderBenchmarks :: [Benchmark]
@@ -397,69 +337,75 @@ boolDecoderBenchmarks =
 -- | Boolean encoder benchmarks
 boolEncoderBenchmarks :: [Benchmark]
 boolEncoderBenchmarks =
-  [ bench "init" $ whnf (\_ -> initBoolEncoder) (),
-    bench "boolWrite-prob128-1000" $ nf (writeBoolN 128 1000) (),
-    bench "boolWrite-prob64-1000" $ nf (writeBoolN 64 1000) ()
+  [ bench "boolWrite-prob128-1000" $ nf (writeBoolN 128) 1000,
+    bench "boolWrite-prob64-1000" $ nf (writeBoolN 64) 1000
   ]
   where
-    writeBoolN :: Word8 -> Int -> () -> B.ByteString
-    writeBoolN prob n _ = finalizeBoolEncoder $ go n initBoolEncoder
+    writeBoolN :: Word8 -> Int -> B.ByteString
+    writeBoolN prob n = finalizeBoolEncoder $ go n initBoolEncoder
       where
         go 0 enc = enc
         go i enc = go (i - 1) (boolWrite prob True enc)
 
--- | Transform benchmarks (VP8L inverse transforms simulation)
+-- | Use the decoder's actual inverse transforms. applyInverseTransforms
+-- creates a fresh mutable copy of the pixels for each invocation.
 transformBenchmarks :: [Benchmark]
 transformBenchmarks =
-  [ bench "subtract-green-inverse-256x256" $ nf applySubtractGreenInverse (generatePixelVector 256 256),
-    bench "subtract-green-inverse-512x512" $ nf applySubtractGreenInverse (generatePixelVector 512 512),
-    bench "predictor-vertical-256x256" $ nf (applyPredictorInverse 256) (generatePixelVector 256 256)
+  [ env (evaluate $ force $ (generatePixelVector size size, predictorModes size)) $ \ ~(pixels, modes) ->
+      bgroup
+        (show size ++ "x" ++ show size)
+        [ bench "subtract-green-inverse" $ nf (applyInverseTransforms [TransformSubGreen] size size) pixels,
+          bench "predictor-vertical" $ nf (applyInverseTransforms [TransformPredictor 4 modes] size size) pixels
+        ]
+  | size <- [256, 512]
   ]
   where
-    generatePixelVector :: Int -> Int -> VS.Vector Word32
-    generatePixelVector w h = VS.generate (w * h) $ \i ->
-      let x = i `mod` w
-          y = i `div` w
-          r = fromIntegral $ (x * 3 + y * 5) `mod` 256
-          g = fromIntegral $ (x * 7 + y * 11) `mod` 256
-          b = fromIntegral $ (x * 13 + y * 17) `mod` 256
-          a = 255 :: Word32
-       in (a `shiftL` 24) .|. (r `shiftL` 16) .|. (g `shiftL` 8) .|. b
+    -- Predictor mode 2 lives in the green channel of each 16x16 tile.
+    predictorModes size = VS.replicate (((size + 15) `div` 16) ^ (2 :: Int)) (2 `shiftL` 8 :: Word32)
 
-    -- Inverse subtract green: red += green, blue += green
-    applySubtractGreenInverse :: VS.Vector Word32 -> VS.Vector Word32
-    applySubtractGreenInverse pixels = runST $ do
-      mut <- VS.thaw pixels
-      forM_ [0 .. VS.length pixels - 1] $ \i -> do
-        argb <- VSM.read mut i
-        let a = (argb `shiftR` 24) .&. 0xFF
-            r = (argb `shiftR` 16) .&. 0xFF
-            g = (argb `shiftR` 8) .&. 0xFF
-            b = argb .&. 0xFF
-            r' = (r + g) .&. 0xFF
-            b' = (b + g) .&. 0xFF
-        VSM.write mut i ((a `shiftL` 24) .|. (r' `shiftL` 16) .|. (g `shiftL` 8) .|. b')
-      VS.freeze mut
+-- | Repetitive inputs exercise maximum-length matches; the nonrepeating case
+-- measures literal emission and hash-chain overhead without long matches.
+lz77Benchmarks :: [Benchmark]
+lz77Benchmarks =
+  [ env (evaluate $ force pixels) $ \input ->
+      bench name $ whnf (forceTokens . lz77Compress 256 256) input
+  | (name, pixels) <-
+      [ ("solid-256x256", VS.replicate (256 * 256) 0xFF806040),
+        ("repeated-row-256x256", VS.generate (256 * 256) $ \i -> 0xFF000000 .|. fromIntegral (i `mod` 256)),
+        ("nonrepeating-256x256", VS.generate (256 * 256) $ \i -> 0xFF000000 .|. fromIntegral i)
+      ]
+  ]
+  where
+    -- Token fields are strict, so evaluating each constructor forces the result.
+    forceTokens :: V.Vector Token -> ()
+    forceTokens = V.foldl' (\() token -> token `seq` ()) ()
 
-    -- Simplified predictor inverse (vertical predictor mode 2)
-    applyPredictorInverse :: Int -> VS.Vector Word32 -> VS.Vector Word32
-    applyPredictorInverse width pixels = runST $ do
-      mut <- VS.thaw pixels
-      let height = VS.length pixels `div` width
-      -- Process rows (skip first row)
-      forM_ [1 .. height - 1] $ \y ->
-        forM_ [0 .. width - 1] $ \x -> do
-          let idx = y * width + x
-              topIdx = (y - 1) * width + x
-          current <- VSM.read mut idx
-          top <- VSM.read mut topIdx
-          -- Add top pixel to current (component-wise, mod 256)
-          let a = ((current `shiftR` 24) + (top `shiftR` 24)) .&. 0xFF
-              r = (((current `shiftR` 16) .&. 0xFF) + ((top `shiftR` 16) .&. 0xFF)) .&. 0xFF
-              g = (((current `shiftR` 8) .&. 0xFF) + ((top `shiftR` 8) .&. 0xFF)) .&. 0xFF
-              b = ((current .&. 0xFF) + (top .&. 0xFF)) .&. 0xFF
-          VSM.write mut idx ((a `shiftL` 24) .|. (r `shiftL` 16) .|. (g `shiftL` 8) .|. b)
-      VS.freeze mut
+-- | Include primary-only tables and a complete tree reaching the 15-bit limit.
+prefixCodeBenchmarks :: [Benchmark]
+prefixCodeBenchmarks =
+  [ env (evaluate $ force lengths) $ \input ->
+      bench name $ whnf (forcePrefixCode . buildPrefixCode) input
+  | (name, lengths) <-
+      [ ("two-symbols", VU.fromList [1, 1]),
+        ("eight-bit", VU.replicate 256 8),
+        ("fifteen-bit", VU.fromList ([1 .. 14] ++ [15, 15]))
+      ]
+  ]
+  where
+    forcePrefixCode :: Either String PrefixCode -> ()
+    forcePrefixCode (Left err) = error err
+    forcePrefixCode (Right (PrefixCodeSingle symbol)) = rnf symbol
+    forcePrefixCode (Right (PrefixCodeTable table bits)) = rnf table `seq` rnf bits
+
+generatePixelVector :: Int -> Int -> VS.Vector Word32
+generatePixelVector w h = VS.generate (w * h) $ \i ->
+  let x = i `mod` w
+      y = i `div` w
+      r = fromIntegral $ (x * 3 + y * 5) `mod` 256
+      g = fromIntegral $ (x * 7 + y * 11) `mod` 256
+      b = fromIntegral $ (x * 13 + y * 17) `mod` 256
+      a = 255 :: Word32
+   in (a `shiftL` 24) .|. (r `shiftL` 16) .|. (g `shiftL` 8) .|. b
 
 -- | Roundtrip benchmarks (encode then decode)
 roundtripBenchmarks :: [Benchmark]

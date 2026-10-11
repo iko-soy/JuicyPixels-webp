@@ -1,5 +1,15 @@
 # Test Suite Notes
 
+## Performance regression coverage
+
+`PredictionBufferSpec` compares compact 8x8 and 16x16 predictions with the
+existing frame predictors for all modes, corners, edges, and interior blocks,
+plus randomized image planes. It also checks that prediction trials leave the
+source plane unchanged. `PrefixCodeSpec` checks actual backing-array sizes as
+well as decoding for short trees, 15-bit trees, and multiple secondary prefixes.
+`LZ77Spec` covers maximum-length runs, periodic ties, end-of-input tails, and
+searching past a shorter nearby match to find a longer older match.
+
 ## Codec interoperability regressions
 
 The decoder regressions in `VP8RegressionSpec`, `VP8LRegressionSpec`,
@@ -11,7 +21,7 @@ under `test/data/regression/` were checked with libwebp; their expected pixels
 do not depend on this library's encoder. Component tests also cover 15-bit
 Huffman codes, packed row boundaries, and speculative bit-reader lookahead.
 
-## Current Test Status: 470 tests, all passing
+## Current Test Status: 514 tests, all passing
 
 ### Known Test Limitations
 

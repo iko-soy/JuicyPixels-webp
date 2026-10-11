@@ -3,7 +3,12 @@
 Pure Haskell WebP codec for JuicyPixels. Supports both decoding and encoding.
 
 **Total Implementation:** ~11,650 lines of Haskell code across 42 modules
-**Test Status:** 421 tests - all passing
+**Test Status:** 514 tests - all passing
+
+**Performance:** Optimized library builds, compact VP8 prediction buffers,
+early termination of maximum-length LZ77 searches, and compact Huffman tables
+are implemented. Component benchmarks now use production code; see
+`PERFORMANCE.md` for details and validation.
 
 ---
 

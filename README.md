@@ -67,7 +67,7 @@ let webpData = encodeWebPAnimation frames canvasWidth canvasHeight quality
 ## Testing
 
 ```bash
-stack test  # 421 tests passing
+stack test  # 514 tests passing
 ```
 
 ## API

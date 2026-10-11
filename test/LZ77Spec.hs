@@ -263,6 +263,23 @@ spec = describe "LZ77" $ do
             tokenPixels = V.sum $ V.map (\t -> case t of TLiteral _ -> 1; TBackRef l _ -> l) tokens
         tokenPixels `shouldBe` 100
 
+      it "keeps the nearest match across maximum-length runs and the final tail" $ do
+        let pixel = 0xFF123456
+            pixels = VS.replicate (1 + 2 * 4096 + 17) pixel
+        lz77Compress (VS.length pixels) 1 pixels
+          `shouldBe` V.fromList [TLiteral pixel, TBackRef 4096 1, TBackRef 4096 1, TBackRef 17 1]
+
+      it "keeps the nearest periodic match when several candidates reach the limit" $ do
+        let pixels = VS.generate (7 + 2 * 4096 + 11) (\i -> fromIntegral (i `mod` 7))
+            expected = map (TLiteral . fromIntegral) [0 .. 6 :: Int] ++ [TBackRef 4096 7, TBackRef 4096 7, TBackRef 11 7]
+        lz77Compress (VS.length pixels) 1 pixels `shouldBe` V.fromList expected
+
+      it "continues searching when an older candidate has a longer match" $ do
+        -- At the final zero the nearest occurrence matches only two pixels;
+        -- the older one matches the entire four-pixel tail.
+        let pixels = VS.fromList [0, 1, 2, 3, 9, 0, 1, 8, 0, 1, 2, 3]
+        V.last (lz77Compress 12 1 pixels) `shouldBe` TBackRef 4 8
+
     describe "kDistanceMapXY" $ do
       it "has 120 entries (same in both modules)" $
         VU.length kDistanceMapXY `shouldBe` 120

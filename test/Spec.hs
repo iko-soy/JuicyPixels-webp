@@ -18,6 +18,7 @@ import qualified IDCTSpec
 import qualified ImageDecodingSpec
 import qualified LZ77Spec
 import qualified LoopFilterSpec
+import qualified PredictionBufferSpec
 import qualified PrefixCodeSpec
 import qualified PropertyExtendedSpec
 import qualified PropertySpec
@@ -49,6 +50,7 @@ main = hspec $ parallel $ do
   describe "IDCT" IDCTSpec.spec
   describe "LoopFilter" LoopFilterSpec.spec
   describe "ColorConvert" ColorConvertSpec.spec
+  describe "Prediction buffers" PredictionBufferSpec.spec
   describe "VP8 Regressions" VP8RegressionSpec.spec
 
   -- VP8L (lossless) component tests

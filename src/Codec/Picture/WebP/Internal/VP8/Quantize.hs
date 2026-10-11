@@ -334,7 +334,10 @@ ssimTrellisScale !var256 =
 -- residual variance grows (content-adaptive masking in textured regions).
 --
 -- Returns True if any coefficient is nonzero after optimization.
-{-# INLINE trellisQuantizeBlock #-}
+-- This large dynamic program is called from several mode trials. Forcing its
+-- full body into every caller makes optimized builds expand dramatically.
+-- Keep the unfolding available without requiring every call to inline it.
+{-# INLINEABLE trellisQuantizeBlock #-}
 trellisQuantizeBlock ::
   forall s.
   DequantFactors ->

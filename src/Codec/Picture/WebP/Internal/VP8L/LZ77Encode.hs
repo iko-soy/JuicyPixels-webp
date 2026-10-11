@@ -283,6 +283,9 @@ lz77Compress _width _height pixels = runST $ do
         go candidate 0 0 0 maxLen
         where
           go !cand !bestLen !bestDist !depth !maxLen
+            -- No later candidate can beat this match. Equal lengths retain
+            -- the first (nearest) match, just as in the strict comparison below.
+            | bestLen == maxLen = return (bestLen, bestDist)
             | cand < 0 || depth >= maxChainDepth = return (bestLen, bestDist)
             -- Chain positions only get older, so all further candidates
             -- are also out of the window.
