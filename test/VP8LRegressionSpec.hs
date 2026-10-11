@@ -2,6 +2,8 @@ module VP8LRegressionSpec (spec) where
 
 import Codec.Picture.Types
 import Codec.Picture.WebP (decodeWebP)
+import Codec.Picture.WebP.Internal.Container
+import Codec.Picture.WebP.Internal.Encode (makeRIFFContainer, makeVP8LChunk)
 import Codec.Picture.WebP.Internal.VP8L (decodeVP8LHeaderless)
 import Control.Monad (forM_)
 import qualified Data.ByteString as B
@@ -37,6 +39,26 @@ spec = describe "VP8L decoder regressions" $ do
         VS.toList (imageData image) `shouldBe` [0, 8, 0, 255]
       Left err -> expectationFailure err
       Right _ -> expectationFailure "Expected RGBA output"
+
+  forM_ ["first", "second"] $ \position -> do
+    let fixture = "test/data/regression/vp8l-unused-distance-" ++ position ++ ".webp"
+    it ("ignores an unused " ++ position ++ " simple distance symbol without consuming copy bits") $ do
+      input <- B.readFile fixture
+      case decodeWebP input of
+        Right (ImageRGBA8 image) -> do
+          (imageWidth image, imageHeight image) `shouldBe` (3, 1)
+          VS.toList (imageData image) `shouldBe` concatMap (\green -> [0, green, 0, 255]) [8, 8, 9]
+        Left err -> expectationFailure err
+        Right _ -> expectationFailure "Expected RGBA output"
+
+    it ("rejects truncated data with an unused " ++ position ++ " distance symbol") $ do
+      input <- B.readFile fixture
+      case parseWebP input of
+        Right (WebPSimpleLossless payload) -> do
+          let chunk = makeVP8LChunk (B.take (B.length payload - 2) payload)
+              truncated = makeRIFFContainer (fromIntegral $ B.length chunk) chunk
+          fmap (const ()) (decodeWebP truncated) `shouldBe` Left "Unexpected end of VP8L bitstream"
+        _ -> expectationFailure "Expected a simple lossless fixture"
 
   it "selects spatial Huffman groups at the encoded block size" $ do
     input <- B.readFile "test/data/regression/vp8l-meta-prefix.webp"

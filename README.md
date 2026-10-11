@@ -24,13 +24,16 @@ stack build
 import Codec.Picture.WebP
 import qualified Data.ByteString as B
 
--- Decode any WebP file
+-- Decode a still WebP image
 fileData <- B.readFile "image.webp"
 case decodeWebP fileData of
   Right (ImageRGB8 img)  -> -- VP8 lossy without alpha
   Right (ImageRGBA8 img) -> -- VP8L lossless or VP8 with alpha
   Left err               -> -- Handle error
 ```
+
+For animated images, use `decodeWebPFirstFrame` for the first frame or
+`decodeWebPAnimation` / `decodeWebPAnimationComposited` for all frames.
 
 ### Encoding
 

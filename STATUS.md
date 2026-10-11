@@ -23,7 +23,8 @@ see `test/TestNotes.md` for validation commands and regression coverage.
 - LZ77 decode loop with distance map (120 entries)
 - Color cache support (1-11 bits)
 - Subresolution images (transforms, color cache, meta prefix codes)
-- Edge cases: backreference overlapping copies, 0-bit transform terminators
+- Edge cases: backreference overlapping copies, 0-bit transform terminators,
+  unused simple prefix-code symbols outside the distance alphabet
 - Output: `ImageRGBA8`
 
 #### VP8 Lossy Decoder
@@ -70,6 +71,9 @@ see `test/TestNotes.md` for validation commands and regression coverage.
 - RIFF chunk parsing with padding
 - Declared RIFF length and unsigned 32-bit canvas-area validation
 - ANIM payloads ignored when the VP8X animation flag is unset
+- Animated containers rejected by the still-image `decodeWebP` API
+- Reconstruction chunk order checked in extended containers and animation frames,
+  while metadata and unknown chunks may appear out of order
 
 ### Encoding
 

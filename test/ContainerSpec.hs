@@ -2,8 +2,9 @@
 
 module ContainerSpec (spec) where
 
-import Codec.Picture.Types (DynamicImage (..), PixelRGBA8 (..), generateImage, pixelAt)
-import Codec.Picture.WebP (decodeWebP, encodeWebPLossless)
+import Codec.Picture (convertRGBA8)
+import Codec.Picture.Types (DynamicImage (..), PixelRGB8 (..), PixelRGBA8 (..), generateImage, pixelAt)
+import Codec.Picture.WebP (WebPAnimFrame (..), decodeWebP, decodeWebPAnimation, decodeWebPAnimationComposited, decodeWebPFirstFrame, encodeWebPLossless, encodeWebPLossy)
 import Codec.Picture.WebP.Internal.Container
 import Control.Monad (forM_)
 import Data.Bits
@@ -117,6 +118,101 @@ spec = describe "Container" $ do
         Right (WebPExtended _ chunks) -> do
           length chunks `shouldBe` 1
         other -> expectationFailure $ "Unexpected result: " ++ show other
+
+  describe "Still-image animation flag" $ do
+    let pixel = PixelRGBA8 12 34 56 255
+        lossless = B.drop 12 $ encodeWebPLossless $ generateImage (\_ _ -> pixel) 1 1
+        lossy = B.drop 12 $ encodeWebPLossy (generateImage (\_ _ -> PixelRGB8 12 34 56) 1 1) 80
+        animHeader = makeChunk "ANIM" $ replicate 6 0
+        expectedError = "Animated WebP images require an animation decoding API"
+
+    forM_ [("VP8", 0x00, lossy), ("VP8L", 0x00, lossless), ("ALPH + VP8", 0x10, makeChunk "ALPH" [0, 128] <> lossy)] $ \(label, flags, imageChunks) -> do
+      forM_ [("without ANIM", B.empty), ("with ANIM but no ANMF", animHeader)] $ \(description, prefix) ->
+        it ("rejects top-level " ++ label ++ " in an animated container " ++ description) $ do
+          let encoded = makeExtendedWebP (flags .|. 0x02) (prefix <> imageChunks)
+          fmap (const ()) (decodeWebP encoded) `shouldBe` Left expectedError
+
+      it ("accepts a still " ++ label ++ " image with the animation flag unset") $ do
+        fmap (const ()) (decodeWebP $ makeExtendedWebP flags imageChunks) `shouldBe` Right ()
+
+    it "leaves valid animations to the dedicated decoding APIs" $ do
+      let frame = makeChunk "ANMF" $ replicate 16 0 ++ B.unpack lossless
+          encoded = makeExtendedWebP 0x02 (animHeader <> frame)
+      fmap (const ()) (decodeWebP encoded) `shouldBe` Left expectedError
+      fmap (\img -> pixelAt (convertRGBA8 img) 0 0) (decodeWebPFirstFrame encoded) `shouldBe` Right pixel
+      fmap (map (\frameData -> pixelAt (convertRGBA8 $ webpFrameImage frameData) 0 0)) (decodeWebPAnimation encoded) `shouldBe` Right [pixel]
+      fmap (map (\img -> pixelAt img 0 0)) (decodeWebPAnimationComposited encoded) `shouldBe` Right [pixel]
+
+  describe "Reconstruction chunk ordering" $ do
+    let pixel = PixelRGBA8 12 34 56 255
+        lossless = B.drop 12 $ encodeWebPLossless $ generateImage (\_ _ -> pixel) 1 1
+        lossy = B.drop 12 $ encodeWebPLossy (generateImage (\_ _ -> PixelRGB8 12 34 56) 1 1) 80
+        alpha = makeChunk "ALPH" [0, 128]
+        animHeader = makeChunk "ANIM" $ replicate 6 0
+        frame chunks = makeChunk "ANMF" $ replicate 16 0 ++ B.unpack chunks
+        expectStillRejection encoded = do
+          fmap (const ()) (decodeWebP encoded) `shouldSatisfy` isLeft
+          parseWebP encoded `shouldSatisfy` isLeft
+        expectAnimationRejection encoded = do
+          fmap (const ()) (decodeWebPFirstFrame encoded) `shouldSatisfy` isLeft
+          fmap (const ()) (decodeWebPAnimation encoded) `shouldSatisfy` isLeft
+          fmap (const ()) (decodeWebPAnimationComposited encoded) `shouldSatisfy` isLeft
+          parseWebP encoded `shouldSatisfy` isLeft
+        alphaAtOrigin image = case pixelAt (convertRGBA8 image) 0 0 of
+          PixelRGBA8 _ _ _ a -> a
+
+    it "rejects ALPH after the top-level VP8 bitstream" $
+      expectStillRejection $
+        makeExtendedWebP 0x10 (lossy <> alpha)
+
+    it "rejects ALPH after the VP8 bitstream inside ANMF" $
+      expectAnimationRejection $
+        makeExtendedWebP 0x12 (animHeader <> frame (lossy <> alpha))
+
+    it "rejects ICCP after the image bitstream" $
+      expectStillRejection $
+        makeExtendedWebP 0x20 (lossless <> makeChunk "ICCP" [0])
+
+    it "rejects ANIM after an animation frame" $
+      expectAnimationRejection $
+        makeExtendedWebP 0x02 (frame lossless <> animHeader)
+
+    it "rejects VP8X after the image bitstream" $
+      expectStillRejection $
+        makeExtendedWebP 0x00 (lossless <> makeVP8XChunk 0x00 0 0)
+
+    it "accepts ICCP before alpha and image data" $ do
+      let encoded = makeExtendedWebP 0x30 (makeChunk "ICCP" [0] <> alpha <> lossy)
+      fmap (const ()) (parseWebP encoded) `shouldBe` Right ()
+      fmap alphaAtOrigin (decodeWebP encoded) `shouldBe` Right 128
+
+    forM_ [("EXIF", 0x08), ("XMP ", 0x04), ("TEST", 0x00)] $ \(tag, flag) ->
+      forM_ [("before alpha", 0), ("between alpha and VP8", 1), ("after VP8", 2)] $ \(position, index) ->
+        it ("accepts " ++ show tag ++ " " ++ position) $ do
+          let chunks = [alpha, lossy]
+              payload = B.concat $ take index chunks ++ [makeChunk tag [1, 2, 3]] ++ drop index chunks
+              encoded = makeExtendedWebP (0x10 .|. flag) payload
+          fmap (const ()) (parseWebP encoded) `shouldBe` Right ()
+          fmap alphaAtOrigin (decodeWebP encoded) `shouldBe` Right 128
+
+    it "accepts multiple ALPH + VP8 frames with interleaved metadata and unknown chunks" $ do
+      let unknown = makeChunk "TEST" [1, 2, 3]
+          firstFrame = frame (unknown <> alpha <> unknown <> lossy <> unknown)
+          secondFrame = frame (makeChunk "ALPH" [0, 255] <> lossy)
+          chunks = makeChunk "EXIF" [1] <> animHeader <> unknown <> firstFrame <> makeChunk "XMP " [2] <> secondFrame <> unknown
+          encoded = makeExtendedWebP 0x1E chunks
+      fmap (const ()) (parseWebP encoded) `shouldBe` Right ()
+      fmap alphaAtOrigin (decodeWebPFirstFrame encoded) `shouldBe` Right 128
+      fmap (map (alphaAtOrigin . webpFrameImage)) (decodeWebPAnimation encoded) `shouldBe` Right [128, 255]
+      fmap (map (alphaAtOrigin . ImageRGBA8)) (decodeWebPAnimationComposited encoded) `shouldBe` Right [128, 255]
+
+    forM_ [[], [0], replicate 6 0] $ \payload ->
+      it ("ignores " ++ show (length payload) ++ "-byte ANIM after a still image") $ do
+        let encoded = makeExtendedWebP 0x00 (lossless <> makeChunk "ANIM" payload)
+        case parseWebP encoded of
+          Right (WebPExtended _ chunks) -> any isAnimChunk chunks `shouldBe` False
+          other -> expectationFailure $ "Unexpected result: " ++ show other
+        fmap (\image -> pixelAt (convertRGBA8 image) 0 0) (decodeWebP encoded) `shouldBe` Right pixel
 
   describe "Chunk Parsing" $ do
     it "parses ALPH chunk" $ do

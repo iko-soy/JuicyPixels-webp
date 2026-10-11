@@ -44,6 +44,8 @@ extra-source-files:
     test/data/regression/vp8l-oversubscribed.webp
     test/data/regression/vp8l-truncated-pixels.webp
     test/data/regression/vp8l-unique-transforms.webp
+    test/data/regression/vp8l-unused-distance-first.webp
+    test/data/regression/vp8l-unused-distance-second.webp
     test/data/regression/vp8-fixtures.md
     test/data/regression/vp8l-fixtures.md
 

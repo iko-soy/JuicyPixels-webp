@@ -25,6 +25,7 @@ import Codec.Picture.WebP.Internal.Container
 import Codec.Picture.WebP.Internal.Encode (encodeWebPLossless, encodeWebPLossy, encodeWebPLossyWithAlpha)
 import Codec.Picture.WebP.Internal.VP8
 import Codec.Picture.WebP.Internal.VP8L
+import Control.Monad (when)
 import qualified Data.ByteString as B
 import qualified Data.Vector.Storable as VS
 import Data.Word
@@ -68,8 +69,9 @@ encodeWebPAnimation frames canvasWidth canvasHeight quality =
           frameDispose = False
         }
 
--- | Decode a WebP image
--- Supports both VP8L (lossless) and VP8 (lossy) formats
+-- | Decode a still WebP image in VP8L (lossless) or VP8 (lossy) format.
+-- For animated images, use 'decodeWebPFirstFrame', 'decodeWebPAnimation',
+-- or 'decodeWebPAnimationComposited'.
 decodeWebP :: B.ByteString -> Either String DynamicImage
 decodeWebP bs = do
   webpFile <- parseWebP bs
@@ -80,7 +82,9 @@ decodeWebP bs = do
     WebPSimpleLossy vp8Data -> do
       img <- decodeVP8 vp8Data
       return $ ImageRGB8 img
-    WebPExtended _header chunks -> do
+    WebPExtended header chunks -> do
+      when (vp8xHasAnimation header) $
+        Left "Animated WebP images require an animation decoding API"
       -- Check for alpha channel
       case (findVP8Chunk chunks, findALPHChunk chunks) of
         (Right vp8Data, Right alphData) -> do

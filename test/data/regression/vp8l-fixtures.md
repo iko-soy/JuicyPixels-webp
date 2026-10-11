@@ -13,6 +13,14 @@ Tests use fixed expected values rather than an encoder/decoder round trip.
 | `vp8l-incomplete.webp` | Green Huffman lengths `[2,2]` leave unused codes; pixel data selects `11` | Rejected |
 | `vp8l-copy-overrun.webp` | 2×1 header, one literal followed by a length-2 backreference at distance 1 | Rejected |
 | `vp8l-copy-exact.webp` | The same literal and backreference with a 3×1 header | Three opaque black pixels |
+| `vp8l-unused-distance-first.webp` | Simple distance symbols `[255,1]`; symbol 255 lies outside the distance alphabet and is ignored | 3×1, green values `[8,8,9]`, red/blue 0, alpha 255 |
+| `vp8l-unused-distance-second.webp` | The same image with simple distance symbols `[1,255]` | The same three pixels |
+
+The unused-distance fixtures contain a literal, a length-1/distance-1 copy,
+then a different literal. The active distance tree contains only symbol 1
+and consumes no pixel bits. Both images were checked with Pillow's libwebp
+decoder. Their regression tests also remove the last two VP8L payload bytes
+while keeping container sizes consistent to verify truncation rejection.
 
 The truncation tests also append enough zero bits to the same Huffman tables
 to verify that a complete stream succeeds, and remove the five-byte VP8L

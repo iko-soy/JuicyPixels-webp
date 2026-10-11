@@ -108,7 +108,7 @@ getWebPBody = do
     "VP8L" -> WebPSimpleLossless <$> getChunkData "VP8L"
     "VP8X" -> do
       header <- getVP8XChunk
-      chunks <- getChunksUntilEnd (not $ vp8xHasAnimation header)
+      chunks <- getChunksUntilEnd TopLevelChunks (not $ vp8xHasAnimation header)
       return $ WebPExtended header chunks
     _ -> fail $ "Unknown first chunk: " ++ show firstChunkTag
 
@@ -146,16 +146,41 @@ getVP8XChunk = do
         vp8xCanvasHeight = canvasHeight
       }
 
--- | Read chunks until end of input, optionally ignoring top-level ANIM chunks.
-getChunksUntilEnd :: Bool -> Get [WebPChunk]
-getChunksUntilEnd ignoreAnim = do
-  empty <- isEmpty
-  if empty
-    then return []
-    else do
-      chunk <- getChunk ignoreAnim
-      rest <- getChunksUntilEnd ignoreAnim
-      return $ maybe rest (: rest) chunk
+data ChunkContext = TopLevelChunks | FrameChunks
+
+-- | Read chunks in reconstruction order (RFC 9649 section 2.7).
+-- Each ANMF starts a separate sequence. Metadata, unknown chunks and ignored
+-- ANIM chunks do not change the ordering state.
+getChunksUntilEnd :: ChunkContext -> Bool -> Get [WebPChunk]
+getChunksUntilEnd context ignoreAnim = go 0
+  where
+    go previousOrder = do
+      empty <- isEmpty
+      if empty
+        then return []
+        else do
+          chunk <- getChunk ignoreAnim
+          nextOrder <- case chunk >>= reconstructionOrder context of
+            Just (order, tag) -> do
+              when (order < previousOrder) $
+                fail $
+                  "Out-of-order WebP chunk: " ++ show tag
+              return order
+            Nothing -> return previousOrder
+          rest <- go nextOrder
+          return $ maybe rest (: rest) chunk
+
+-- VP8X has already been consumed and cannot occur again. ICCP, ANIM and ANMF
+-- have top-level roles; only ALPH and the bitstream are ordered inside frames.
+reconstructionOrder :: ChunkContext -> WebPChunk -> Maybe (Int, FourCC)
+reconstructionOrder _ (ChunkUnknown "VP8X" _) = Just (-1, "VP8X")
+reconstructionOrder TopLevelChunks (ChunkUnknown "ICCP" _) = Just (0, "ICCP")
+reconstructionOrder TopLevelChunks (ChunkANIM _) = Just (1, "ANIM")
+reconstructionOrder TopLevelChunks (ChunkANMF _ _) = Just (2, "ANMF")
+reconstructionOrder _ (ChunkALPH _) = Just (3, "ALPH")
+reconstructionOrder _ (ChunkVP8 _) = Just (4, "VP8 ")
+reconstructionOrder _ (ChunkVP8L _) = Just (4, "VP8L")
+reconstructionOrder _ _ = Nothing
 
 -- | Parse a single chunk
 getChunk :: Bool -> Get (Maybe WebPChunk)
@@ -243,7 +268,7 @@ getANMFChunk totalSize = do
           }
 
   -- The VP8X flag applies to top-level ANIM chunks, not frame subchunks.
-  case runGetOrFail (getChunksUntilEnd False) (BL.fromStrict subChunksData) of
+  case runGetOrFail (getChunksUntilEnd FrameChunks False) (BL.fromStrict subChunksData) of
     Left (_, _, err) -> fail $ "Failed to parse ANMF sub-chunks: " ++ err
     Right (_, _, subChunks) -> return $ ChunkANMF frame subChunks
 

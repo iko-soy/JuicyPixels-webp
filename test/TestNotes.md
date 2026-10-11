@@ -32,6 +32,17 @@ across raw, first-frame, and composited decoding. Container tests ensure ANIM
 payloads are ignored when the animation flag is unset while preserving chunk
 framing checks and validation for animated files.
 
+Simple prefix-code tests permit unused distance symbols 40–255 in either
+serialized position, preserve bit consumption, and reject empty resulting
+trees. Reference-checked fixtures exercise a distance copy followed by a
+literal. The still-image API rejects the animation flag for VP8, VP8L, and
+ALPH + VP8 containers, while the dedicated APIs continue to decode animations.
+
+Chunk-order regressions reject late ALPH, ICCP, ANIM, and VP8X chunks. Positive
+controls allow metadata and unknown chunks between reconstruction chunks,
+reset alpha/bitstream ordering for each animation frame, and keep ignoring
+ANIM chunks when the animation flag is unset.
+
 ## Full-suite validation
 
 Run all functional, property, quality, and stress tests with:
