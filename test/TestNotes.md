@@ -11,7 +11,18 @@ under `test/data/regression/` were checked with libwebp; their expected pixels
 do not depend on this library's encoder. Component tests also cover 15-bit
 Huffman codes, packed row boundaries, and speculative bit-reader lookahead.
 
-## Current Test Status: 470 tests, all passing
+`EdgeCasesSpec` also rejects empty or oversized first VP8 partitions and
+coefficient partition sizes that exceed the available data. Additional cases
+exercise entropy groups across both axes, predictor-map rows before and after
+palette expansion, and direct Huffman entries alongside multiple secondary tables.
+
+## Full-suite validation
+
+Run all functional, property, quality, and stress tests with:
+
+```bash
+stack --no-nix --lock-file read-only -j4 test --ghc-options='-O1 -fignore-interface-pragmas' --test-arguments='--jobs=2 +RTS -N2 -RTS'
+```
 
 ### Known Test Limitations
 

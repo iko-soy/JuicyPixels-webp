@@ -124,6 +124,20 @@ spec = describe "Spec Compliance" $ do
           a `shouldBe` 255
         _ -> expectationFailure "Decode failed"
 
+  describe "VP8L Entropy Blocks (RFC 9649 Section 4.4)" $ do
+    it "adds two to the encoded block size and selects groups across both axes" $ do
+      case decodeWebP entropyBlocksWebP of
+        Right (ImageRGBA8 dec) -> do
+          (imageWidth dec, imageHeight dec) `shouldBe` (8, 5)
+          mapM_
+            (\(x, y) -> do
+                let expected = if even (x `div` 4 + y `div` 4) then PixelRGBA8 255 0 0 255 else PixelRGBA8 0 0 255 255
+                pixelAt dec x y `shouldBe` expected
+            )
+            [(x, y) | y <- [0 .. 4], x <- [0 .. 7]]
+        Left err -> expectationFailure $ "Decode failed: " ++ err
+        Right _ -> expectationFailure "Expected RGBA8 image"
+
   describe "Alpha Channel (RFC 9649 Section 3)" $ do
     it "VP8X extended format supports alpha" $ do
       let img = generateImage (\_ _ -> PixelRGBA8 255 128 64 200) 32 32
@@ -215,3 +229,18 @@ fromWord32LE [a, b, c, d] =
     + fromIntegral c * 65536
     + fromIntegral d * 16777216
 fromWord32LE _ = 0
+
+-- Hand-packed RFC 9649 stream, independently decoded with Pillow/libwebp.
+-- The 8x5 stream has no transforms/cache and encodes prefix_bits as zero:
+-- blocks are 4x4, and the 2x2 entropy image selects groups [0, 1; 1, 0].
+-- Group zero emits opaque red; group one emits opaque blue.
+entropyBlocksWebP :: B.ByteString
+entropyBlocksWebP =
+  B.pack
+    [ 0x52, 0x49, 0x46, 0x46, 0x28, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x4c,
+      0x1c, 0x00, 0x00, 0x00, 0x2f, 0x07, 0x00, 0x01,
+      0x00, 0x84, 0x03, 0x04, 0x14, 0xa0, 0x00, 0xfd,
+      0x2f, 0x80, 0x15, 0xa0, 0xff, 0x05, 0xe8, 0x7f,
+      0x01, 0x0a, 0x50, 0x80, 0xfe, 0xf7, 0xbf, 0x00
+    ]

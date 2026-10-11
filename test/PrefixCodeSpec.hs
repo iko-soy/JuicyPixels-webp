@@ -105,6 +105,21 @@ spec = describe "PrefixCode" $ do
           actual `shouldBe` fromIntegral expected
           getBitPosition reader' `shouldBe` 9
 
+    it "keeps direct codes separate from multiple secondary tables" $ do
+      -- The first 254 prefixes are eight-bit codes; the last two each
+      -- contain two nine-bit codes, with canonical values 508..511.
+      let lengths = VU.fromList (replicate 254 8 ++ replicate 4 9)
+      case buildPrefixCode lengths of
+        Left err -> expectationFailure err
+        Right code -> forM_ [0 .. 257] $ \symbol -> do
+          let len = lengths VU.! symbol
+              canonical = if symbol < 254 then symbol else symbol + 254
+              writer = writeBitsReversed len (fromIntegral canonical) emptyBitWriter
+              reader = initBitReader $ bitWriterToByteString $ finalizeBitWriter writer
+              (actual, reader') = decodeSymbol code reader
+          actual `shouldBe` fromIntegral symbol
+          getBitPosition reader' `shouldBe` len
+
     it "decodes single-symbol code" $ do
       let lengths = VU.fromList [0, 0, 5, 0]
           bs = B.pack [0xFF]

@@ -56,6 +56,10 @@ parseVP8Header bs = do
   case runGetOrFail parseUncompressedHeader (fromStrict bs) of
     Left (_, _, err) -> Left $ "Failed to parse uncompressed header: " ++ err
     Right (rest, _, (w, h, hscale, vscale, partitionSize)) -> do
+      when (partitionSize == 0) $
+        Left "VP8 first partition is empty"
+      when (partitionSize > B.length (toStrict rest)) $
+        Left "VP8 first partition exceeds the available data"
       let partitionBytes = B.take partitionSize (toStrict rest)
       let decoder = initBoolDecoder partitionBytes
 
@@ -375,6 +379,8 @@ parseDCTPartitions bs numPartitions
       case runGetOrFail (parsePartitionSizes numPartitions) (B.fromStrict bs) of
         Left (_, _, err) -> Left $ "Failed to parse DCT partition sizes: " ++ err
         Right (rest, _, sizes) -> do
+          when (sum sizes > B.length (B.toStrict rest)) $
+            Left "VP8 DCT partition sizes exceed the available data"
           let partitions = extractPartitions (B.toStrict rest) sizes
           return partitions
 
