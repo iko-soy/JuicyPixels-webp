@@ -19,12 +19,13 @@ where
 
 import Codec.Picture.Types
 import Codec.Picture.WebP.Internal.Alpha (decodeAlpha)
-import Codec.Picture.WebP.Internal.Animation (WebPAnimFrame (..), combineRGBAlpha, decodeAnimFrame, decodeAnimation, decodeAnimationWithCompositing)
+import Codec.Picture.WebP.Internal.Animation (WebPAnimFrame (..), combineRGBAlpha, decodeAnimation, decodeAnimationFirstFrame, decodeAnimationWithCompositing)
 import Codec.Picture.WebP.Internal.AnimationEncode (AnimationFrame (..), encodeAnimation)
 import Codec.Picture.WebP.Internal.Container
 import Codec.Picture.WebP.Internal.Encode (encodeWebPLossless, encodeWebPLossy, encodeWebPLossyWithAlpha)
 import Codec.Picture.WebP.Internal.VP8
 import Codec.Picture.WebP.Internal.VP8L
+import Control.Monad (when)
 import qualified Data.ByteString as B
 import qualified Data.Vector.Storable as VS
 import Data.Word
@@ -39,8 +40,13 @@ data WebPEncodeFrame = WebPEncodeFrame
 
 -- | Encode animation to WebP
 --
--- Frames are encoded with the lossy VP8 codec. Throws an error if any frame's
--- width or height is outside @1..16383@.
+-- At least one frame is required. Frames are encoded with the lossy VP8 codec.
+-- Canvas dimensions must be in
+-- @1..16777216@, with at most @4294967295@ pixels. Frame dimensions must be in
+-- @1..16383@, offsets must be nonnegative and even, and each frame must fit
+-- within the canvas. Durations must be in @0..16777215@ milliseconds.
+-- Throws an error for invalid parameters or a VP8 first partition exceeding
+-- @524287@ bytes.
 encodeWebPAnimation ::
   [WebPEncodeFrame] -> -- Frames to encode
   Int ->
@@ -63,8 +69,9 @@ encodeWebPAnimation frames canvasWidth canvasHeight quality =
           frameDispose = False
         }
 
--- | Decode a WebP image
--- Supports both VP8L (lossless) and VP8 (lossy) formats
+-- | Decode a still WebP image in VP8L (lossless) or VP8 (lossy) format.
+-- For animated images, use 'decodeWebPFirstFrame', 'decodeWebPAnimation',
+-- or 'decodeWebPAnimationComposited'.
 decodeWebP :: B.ByteString -> Either String DynamicImage
 decodeWebP bs = do
   webpFile <- parseWebP bs
@@ -75,7 +82,9 @@ decodeWebP bs = do
     WebPSimpleLossy vp8Data -> do
       img <- decodeVP8 vp8Data
       return $ ImageRGB8 img
-    WebPExtended _header chunks -> do
+    WebPExtended header chunks -> do
+      when (vp8xHasAnimation header) $
+        Left "Animated WebP images require an animation decoding API"
       -- Check for alpha channel
       case (findVP8Chunk chunks, findALPHChunk chunks) of
         (Right vp8Data, Right alphData) -> do
@@ -97,15 +106,16 @@ decodeWebP bs = do
           img <- decodeVP8L vp8lChunk
           return $ ImageRGBA8 img
 
--- | Decode first frame only (for animated images)
+-- | Decode the first frame without compositing or decoding later frames.
+-- Animated images must contain ANIM and ANMF chunks, and the decoded frame
+-- must fit within the canvas. Nonanimated images are decoded normally.
 decodeWebPFirstFrame :: B.ByteString -> Either String DynamicImage
 decodeWebPFirstFrame bs = do
   webpFile <- parseWebP bs
   case webpFile of
-    WebPExtended header chunks
-      | vp8xHasAnimation header,
-        (anmf : _) <- [(frame, sub) | ChunkANMF frame sub <- chunks] ->
-          webpFrameImage <$> decodeAnimFrame anmf
+    WebPExtended header _
+      | vp8xHasAnimation header ->
+          webpFrameImage <$> decodeAnimationFirstFrame webpFile
     _ -> decodeWebP bs
 
 -- | Decode animation frames

@@ -41,6 +41,7 @@ encodeWebPLossless img =
 --   71-100: High quality, larger files
 --
 -- Throws an error if the width or height is outside @1..16383@.
+-- Also throws if the compressed first VP8 partition exceeds @524287@ bytes.
 encodeWebPLossy :: Image PixelRGB8 -> Int -> B.ByteString
 encodeWebPLossy img quality =
   let vp8Data = VP8.Encode.encodeVP8 img quality
@@ -120,6 +121,7 @@ makeVP8XChunk width height hasAlpha hasAnim =
 -- | Encode RGBA image as lossy WebP with alpha channel
 --
 -- Throws an error if the width or height is outside @1..16383@.
+-- Also throws if the compressed first VP8 partition exceeds @524287@ bytes.
 encodeWebPLossyWithAlpha :: Image PixelRGBA8 -> Int -> B.ByteString
 encodeWebPLossyWithAlpha img quality =
   let width = imageWidth img

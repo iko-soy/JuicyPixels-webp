@@ -26,7 +26,8 @@ data BoolDecoder = BoolDecoder
     bdRange :: !Word32, -- Range [127..254]
     bdValue :: !Word32, -- Accumulated bits
     bdBits :: !Int, -- Number of valid bits in value
-    bdPos :: !Int -- Position in bytes
+    bdPos :: !Int, -- Position in bytes
+    bdEof :: !Bool -- A refill has attempted to read past the partition
   }
   deriving (Show)
 
@@ -312,7 +313,8 @@ initBoolDecoder bs
                 bdRange = 254, -- range-1, like libwebp
                 bdValue = value,
                 bdBits = len * 8 - 8, -- Start with some bits loaded
-                bdPos = len
+                bdPos = len,
+                bdEof = False
               }
        in decoder
   where
@@ -329,8 +331,9 @@ loadNewBytes :: BoolDecoder -> BoolDecoder
 loadNewBytes !dec
   | bdBits dec >= 0 = dec
   | bdPos dec >= B.length (bdBytes dec) =
-      -- End of stream, just shift in zeros
-      dec {bdValue = bdValue dec `shiftL` 8, bdBits = bdBits dec + 8}
+      -- As in libwebp, flag EOF only when another symbol needs a refill.
+      -- A final normalization may leave bdBits negative without overreading.
+      dec {bdValue = bdValue dec `shiftL` 8, bdBits = bdBits dec + 8, bdEof = True}
   | otherwise =
       let newByte = fromIntegral (B.index (bdBytes dec) (bdPos dec)) :: Word32
           newValue = (bdValue dec `shiftL` 8) .|. newByte

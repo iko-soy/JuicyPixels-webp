@@ -48,14 +48,14 @@ establish an end-to-end codec speedup. The estimates below describe older work.
 
 ### Validation
 
-The optimized build passes all 514 tests and a one-iteration smoke run of all
+The optimized build passes all 663 tests and a one-iteration smoke run of all
 79 benchmarks. A separate comparison produced byte-identical output for 56
 lossy and 16 lossless encodings spanning frame borders, odd dimensions, solid
 colors, gradients, noise, and checkerboards.
 
 For an end-to-end comparison of the VP8 buffer change, both builds used GHC
 9.10.3, `-O2`, the same `INLINABLE` quantizer boundary, and one runtime capability.
-The reference otherwise used the previous codec source. Three alternating
+The reference otherwise used codec source from commit `36a5b41`. Three alternating
 fresh-process runs encoded generated RGB gradients at quality 50; input
 generation was excluded. CPU figures are medians and allocation is total bytes
 allocated per encode, expressed in decimal GB. Output lengths and checksums
@@ -63,12 +63,12 @@ matched in every run.
 
 | Image | CPU before | CPU after | Allocated before | Allocated after |
 |-------|------------|-----------|------------------|-----------------|
-| 512x512 | 5.159 s | 5.021 s | 3.547 GB | 1.916 GB |
-| 1024x1024 | 21.589 s | 20.256 s | 33.517 GB | 7.665 GB |
+| 512x512 | 5.225 s | 5.050 s | 3.547 GB | 1.916 GB |
+| 1024x1024 | 21.721 s | 20.254 s | 33.517 GB | 7.665 GB |
 
 These measurements isolate the source changes from the separate benefit of
 enabling compiler optimization. The 1024x1024 case used 77% less allocation and
-6% less CPU time; other image content and dimensions can behave differently.
+7% less CPU time; other image content and dimensions can behave differently.
 
 ## Summary
 

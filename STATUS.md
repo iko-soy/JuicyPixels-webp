@@ -3,7 +3,8 @@
 Pure Haskell WebP codec for JuicyPixels. Supports both decoding and encoding.
 
 **Total Implementation:** ~11,650 lines of Haskell code across 42 modules
-**Test Status:** 514 tests - all passing
+**Tests:** Functional, interoperability, property, quality, and stress suites;
+see `test/TestNotes.md` for validation commands and regression coverage.
 
 **Performance:** Optimized library builds, compact VP8 prediction buffers,
 early termination of maximum-length LZ77 searches, and compact Huffman tables
@@ -27,11 +28,13 @@ are implemented. Component benchmarks now use production code; see
 - LZ77 decode loop with distance map (120 entries)
 - Color cache support (1-11 bits)
 - Subresolution images (transforms, color cache, meta prefix codes)
-- Edge cases: backreference overlapping copies, 0-bit transform terminators
+- Edge cases: backreference overlapping copies, 0-bit transform terminators,
+  unused simple prefix-code symbols outside the distance alphabet
 - Output: `ImageRGBA8`
 
 #### VP8 Lossy Decoder
 - Complete frame header parsing (uncompressed + compressed)
+- Validation of supported profiles, displayable frames, and nonzero dimensions
 - Boolean arithmetic decoder (range coder)
 - Macroblock-level processing (16x16 luma, 8x8 chroma)
 - Intra prediction modes:
@@ -47,6 +50,7 @@ are implemented. Component benchmarks now use production code; see
 - Loop filter (normal and simple variants)
 - YCbCr to RGB conversion
 - Segmentation support (up to 4 segments)
+- Keyframe segment defaults and arithmetic-stream exhaustion validation
 - Output: `ImageRGB8` (or `ImageRGBA8` with alpha)
 
 #### Alpha Channel (ALPH Chunk)
@@ -60,6 +64,8 @@ are implemented. Component benchmarks now use production code; see
 - ANMF frame parsing (position, dimensions, duration, blend/dispose flags)
 - Per-frame decoding with VP8, VP8L, or alpha data
 - Animation compositing with canvas support
+- Required animation header and nonempty frame validation
+- Canvas bounds checked for raw, first-frame, and composited decoding
 
 #### Container Parsing
 - Simple lossy (VP8 only)
@@ -68,6 +74,11 @@ are implemented. Component benchmarks now use production code; see
 - 1-based width/height fields handled correctly
 - Reserved fields ignored per spec
 - RIFF chunk parsing with padding
+- Declared RIFF length and unsigned 32-bit canvas-area validation
+- ANIM payloads ignored when the VP8X animation flag is unset
+- Animated containers rejected by the still-image `decodeWebP` API
+- Reconstruction chunk order checked in extended containers and animation frames,
+  while metadata and unknown chunks may appear out of order
 
 ### Encoding
 
@@ -104,6 +115,7 @@ are implemented. Component benchmarks now use production code; see
 - ANMF frame creation with metadata
 - VP8X extended header with animation flag
 - Per-frame VP8/VP8L encoding with optional alpha
+- Validation of nonempty frames, canvas and frame geometry, even offsets, and 24-bit durations
 
 #### Container Creation
 - `makeRIFFContainer` - RIFF envelope

@@ -5,7 +5,8 @@ module SpecComplianceSpec (spec) where
 import Codec.Picture
 import Codec.Picture.WebP
 import Codec.Picture.WebP.Internal.Container
-import Data.Bits ((.&.))
+import Control.Monad (forM_)
+import Data.Bits (clearBit, shiftL, (.&.), (.|.))
 import qualified Data.ByteString as B
 import Data.Word
 import Test.Hspec
@@ -71,6 +72,34 @@ spec = describe "Spec Compliance" $ do
       B.index encoded (21 + tagSize) `shouldBe` 0x01
       B.index encoded (22 + tagSize) `shouldBe` 0x2A
 
+  describe "VP8 uncompressed header (RFC 6386 Section 9.1)" $
+    beforeAll (B.readFile "test/data/regression/vp8-empty-coefficients.webp") $ do
+      -- Mutate a reference bitstream rather than relying on the encoder.
+      -- libwebp accepts profiles 0-3 and rejects each malformed header below.
+      forM_ [0 .. 3] $ \profile ->
+        it ("accepts supported profile " ++ show profile) $ \valid -> do
+          let encoded = modifyVP8HeaderByte 0 (\b -> (b .&. 0xF1) .|. (profile `shiftL` 1)) valid
+          case decodeWebP encoded of
+            Right (ImageRGB8 dec) -> do
+              (imageWidth dec, imageHeight dec) `shouldBe` (16, 16)
+              imageData dec `shouldBe` imageData (generateImage (\_ _ -> PixelRGB8 130 130 130) 16 16)
+            Left err -> expectationFailure $ "Decode failed: " ++ err
+            Right _ -> expectationFailure "Expected RGB8 image"
+
+      forM_ [4 .. 7] $ \profile ->
+        it ("rejects reserved profile " ++ show profile) $ \valid -> do
+          let encoded = modifyVP8HeaderByte 0 (\b -> (b .&. 0xF1) .|. (profile `shiftL` 1)) valid
+          (() <$ decodeWebP encoded) `shouldBe` Left "Failed to parse uncompressed header: Unsupported VP8 profile"
+
+      it "rejects a frame that is not marked for display" $ \valid -> do
+        let encoded = modifyVP8HeaderByte 0 (`clearBit` 4) valid
+        (() <$ decodeWebP encoded) `shouldBe` Left "Failed to parse uncompressed header: Only displayable VP8 frames are supported"
+
+      forM_ [("width", 6), ("height", 8)] $ \(dimension, offset) ->
+        it ("rejects zero " ++ dimension) $ \valid -> do
+          let encoded = modifyVP8HeaderByte (offset + 1) (.&. 0xC0) $ modifyVP8HeaderByte offset (const 0) valid
+          (() <$ decodeWebP encoded) `shouldBe` Left "Failed to parse uncompressed header: VP8 frame dimensions must be nonzero"
+
   describe "Width/Height Encoding" $ do
     it "VP8L stores width-1 (RFC 9649 Section 4.1)" $ do
       -- When decoding, we should get back the original dimensions
@@ -123,6 +152,20 @@ spec = describe "Spec Compliance" $ do
           abs (fromIntegral g - 32 :: Int) `shouldSatisfy` (< 50)
           a `shouldBe` 255
         _ -> expectationFailure "Decode failed"
+
+  describe "VP8L Entropy Blocks (RFC 9649 Section 4.4)" $ do
+    it "adds two to the encoded block size and selects groups across both axes" $ do
+      case decodeWebP entropyBlocksWebP of
+        Right (ImageRGBA8 dec) -> do
+          (imageWidth dec, imageHeight dec) `shouldBe` (8, 5)
+          mapM_
+            ( \(x, y) -> do
+                let expected = if even (x `div` 4 + y `div` 4) then PixelRGBA8 255 0 0 255 else PixelRGBA8 0 0 255 255
+                pixelAt dec x y `shouldBe` expected
+            )
+            [(x, y) | y <- [0 .. 4], x <- [0 .. 7]]
+        Left err -> expectationFailure $ "Decode failed: " ++ err
+        Right _ -> expectationFailure "Expected RGBA8 image"
 
   describe "Alpha Channel (RFC 9649 Section 3)" $ do
     it "VP8X extended format supports alpha" $ do
@@ -215,3 +258,67 @@ fromWord32LE [a, b, c, d] =
     + fromIntegral c * 65536
     + fromIntegral d * 16777216
 fromWord32LE _ = 0
+
+-- The simple fixture starts its VP8 payload after the 12-byte RIFF header
+-- and the 8-byte chunk header. Preserve every other header and payload byte.
+modifyVP8HeaderByte :: Int -> (Word8 -> Word8) -> B.ByteString -> B.ByteString
+modifyVP8HeaderByte offset f bytes =
+  let index = 20 + offset
+   in B.take index bytes <> B.singleton (f (B.index bytes index)) <> B.drop (index + 1) bytes
+
+-- Hand-packed RFC 9649 stream, independently decoded with Pillow/libwebp.
+-- The 8x5 stream has no transforms/cache and encodes prefix_bits as zero:
+-- blocks are 4x4, and the 2x2 entropy image selects groups [0, 1; 1, 0].
+-- Group zero emits opaque red; group one emits opaque blue.
+entropyBlocksWebP :: B.ByteString
+entropyBlocksWebP =
+  B.pack
+    [ 0x52,
+      0x49,
+      0x46,
+      0x46,
+      0x28,
+      0x00,
+      0x00,
+      0x00,
+      0x57,
+      0x45,
+      0x42,
+      0x50,
+      0x56,
+      0x50,
+      0x38,
+      0x4c,
+      0x1c,
+      0x00,
+      0x00,
+      0x00,
+      0x2f,
+      0x07,
+      0x00,
+      0x01,
+      0x00,
+      0x84,
+      0x03,
+      0x04,
+      0x14,
+      0xa0,
+      0x00,
+      0xfd,
+      0x2f,
+      0x80,
+      0x15,
+      0xa0,
+      0xff,
+      0x05,
+      0xe8,
+      0x7f,
+      0x01,
+      0x0a,
+      0x50,
+      0x80,
+      0xfe,
+      0xf7,
+      0xbf,
+      0x00
+    ]

@@ -1331,35 +1331,35 @@ const uint8 default_coeff_probs[4][8][3][11] = {
 
 ### Inverse Walsh-Hadamard Transform (WHT, for Y2 block)
 
-The Y2 block contains 16 DC values for the 16 Y subblocks. After dequantization, apply the inverse WHT:
+The Y2 block contains 16 DC values for the 16 Y subblocks. After dequantization, apply the inverse WHT. RFC 6386 sections 14.3 and 20.8 specify columns first, then rows with rounding and division by eight. The first pass stores signed 16-bit intermediates, so reversing the passes can change results when a sum overflows:
 
 ```c
 void iwht4x4(int16 input[16], int16 output[16]) {
     int i;
     int16 tmp[16];
 
-    // Rows
+    // First pass: columns, storing unscaled signed 16-bit intermediates
     for (i = 0; i < 4; i++) {
-        int a = input[i*4+0] + input[i*4+3];
-        int b = input[i*4+1] + input[i*4+2];
-        int c = input[i*4+1] - input[i*4+2];
-        int d = input[i*4+0] - input[i*4+3];
-        tmp[i*4+0] = a + b;
-        tmp[i*4+1] = c + d;
-        tmp[i*4+2] = a - b;
-        tmp[i*4+3] = d - c;
+        int a = input[0*4+i] + input[3*4+i];
+        int b = input[1*4+i] + input[2*4+i];
+        int c = input[1*4+i] - input[2*4+i];
+        int d = input[0*4+i] - input[3*4+i];
+        tmp[0*4+i] = a + b;
+        tmp[1*4+i] = c + d;
+        tmp[2*4+i] = a - b;
+        tmp[3*4+i] = d - c;
     }
 
-    // Columns
+    // Second pass: rows, with rounding and division by eight
     for (i = 0; i < 4; i++) {
-        int a = tmp[0*4+i] + tmp[3*4+i];
-        int b = tmp[1*4+i] + tmp[2*4+i];
-        int c = tmp[1*4+i] - tmp[2*4+i];
-        int d = tmp[0*4+i] - tmp[3*4+i];
-        output[0*4+i] = (a + b + 3) >> 3;
-        output[1*4+i] = (c + d + 3) >> 3;
-        output[2*4+i] = (a - b + 3) >> 3;
-        output[3*4+i] = (d - c + 3) >> 3;
+        int a = tmp[i*4+0] + tmp[i*4+3];
+        int b = tmp[i*4+1] + tmp[i*4+2];
+        int c = tmp[i*4+1] - tmp[i*4+2];
+        int d = tmp[i*4+0] - tmp[i*4+3];
+        output[i*4+0] = (a + b + 3) >> 3;
+        output[i*4+1] = (c + d + 3) >> 3;
+        output[i*4+2] = (a - b + 3) >> 3;
+        output[i*4+3] = (d - c + 3) >> 3;
     }
 }
 ```

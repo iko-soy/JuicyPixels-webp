@@ -58,6 +58,26 @@ spec = describe "IDCT" $ do
       VS.length result `shouldBe` 16
 
   describe "Walsh-Hadamard Transform" $ do
+    it "processes columns before rows when a row sum exceeds Int16" $ do
+      let result = runST $ do
+            coeffs <- VSM.replicate 16 0
+            VSM.write coeffs 1 16384
+            VSM.write coeffs 2 16384
+            iwht4x4 coeffs
+      -- RFC 6386 section 20.8: the column pass preserves these values,
+      -- then the row pass divides their sum by eight before storing it.
+      VS.toList result `shouldBe` concat (replicate 4 [4096, 0, -4096, 0])
+
+    it "preserves Int16 intermediates after the first column pass" $ do
+      let result = runST $ do
+            coeffs <- VSM.replicate 16 0
+            VSM.write coeffs 4 16384
+            VSM.write coeffs 8 16384
+            iwht4x4 coeffs
+      -- The transposed input overflows in the prescribed first pass.
+      -- Its +32768 and -32768 sums both become -32768 before scaling.
+      VS.toList result `shouldBe` concatMap (replicate 4) [-4096, 0, -4096, 0]
+
     it "handles all-zero input" $ do
       let result = runST $ do
             coeffs <- VSM.replicate 16 0

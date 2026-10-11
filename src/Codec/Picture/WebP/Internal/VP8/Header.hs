@@ -56,6 +56,10 @@ parseVP8Header bs = do
   case runGetOrFail parseUncompressedHeader (fromStrict bs) of
     Left (_, _, err) -> Left $ "Failed to parse uncompressed header: " ++ err
     Right (rest, _, (w, h, hscale, vscale, partitionSize)) -> do
+      when (partitionSize == 0) $
+        Left "VP8 first partition is empty"
+      when (partitionSize > B.length (toStrict rest)) $
+        Left "VP8 first partition exceeds the available data"
       let partitionBytes = B.take partitionSize (toStrict rest)
       let decoder = initBoolDecoder partitionBytes
 
@@ -89,6 +93,9 @@ parseVP8Header bs = do
             let (prob, d) = boolLiteral 8 d12
             return (True, fromIntegral prob, d)
           else return (False, 0, d12)
+
+      when (bdEof d13) $
+        Left "Unexpected end of VP8 compressed header"
 
       let remainingBytes = B.drop partitionSize (toStrict rest)
       dctPartitions <- parseDCTPartitions remainingBytes (numPartitions - 1)
@@ -132,6 +139,10 @@ parseUncompressedHeader = do
 
   when (frameTag /= 0) $
     fail "Only keyframes are supported"
+  when (versionNum > 3) $
+    fail "Unsupported VP8 profile"
+  when (showFrame == 0) $
+    fail "Only displayable VP8 frames are supported"
 
   startCode <- getByteString 3
   when (startCode /= B.pack [0x9D, 0x01, 0x2A]) $
@@ -151,6 +162,9 @@ parseUncompressedHeader = do
 
   let width = widthField .&. 0x3FFF
       height = heightField .&. 0x3FFF
+
+  when (width == 0 || height == 0) $
+    fail "VP8 frame dimensions must be nonzero"
 
   -- Frame tag is 24-bit little-endian: frame_tag = byte0 | (byte1 << 8) | (byte2 << 16)
   -- first_part_size is bits [23:5] (19 bits): (frame_tag >> 5) & 0x7FFFF
@@ -176,7 +190,8 @@ parseSegmentation decoder = do
             let (absMode, d) = boolRead 128 d3
             (quants, d') <- parseSegmentQuantizers d
             return (absMode, quants, d')
-          else return (False, VU.replicate 4 0, d3)
+          -- Keyframes reset segment features to absolute zero values.
+          else return (True, VU.replicate 4 0, d3)
 
       (filterStrengths, d5) <-
         if updateData
@@ -375,6 +390,8 @@ parseDCTPartitions bs numPartitions
       case runGetOrFail (parsePartitionSizes numPartitions) (B.fromStrict bs) of
         Left (_, _, err) -> Left $ "Failed to parse DCT partition sizes: " ++ err
         Right (rest, _, sizes) -> do
+          when (sum sizes > B.length (B.toStrict rest)) $
+            Left "VP8 DCT partition sizes exceed the available data"
           let partitions = extractPartitions (B.toStrict rest) sizes
           return partitions
 

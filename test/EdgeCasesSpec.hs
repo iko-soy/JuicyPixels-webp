@@ -2,12 +2,36 @@ module EdgeCasesSpec (spec) where
 
 import Codec.Picture
 import Codec.Picture.WebP
+import Codec.Picture.WebP.Internal.Encode (makeRIFFContainer, makeVP8Chunk)
+import Codec.Picture.WebP.Internal.VP8.EncodeHeader (generateUncompressedHeader)
 import qualified Data.ByteString as B
+import Data.Either (isLeft)
 import Test.Hspec
 
 spec :: Spec
 spec = do
   describe "Edge Cases and Boundary Conditions" $ do
+    describe "VP8 partition validation" $ do
+      it "rejects an empty first partition without throwing" $
+        expectInvalidVP8 (generateUncompressedHeader 16 16 0)
+
+      it "rejects a first partition longer than the remaining data" $
+        -- Valid skipped B_PRED mode data occupies nine bytes, but the
+        -- frame header advertises ten. Empty coefficients are otherwise valid.
+        expectInvalidVP8
+          ( generateUncompressedHeader 16 16 10
+              <> B.pack [0, 0, 0, 8, 0, 36, 76, 0, 0]
+          )
+
+      it "rejects coefficient partition sizes larger than their available data" $
+        -- Two DCT partitions are declared; the first claims four bytes
+        -- although only one byte follows the partition size table.
+        expectInvalidVP8
+          ( generateUncompressedHeader 16 16 9
+              <> B.pack [0, 1, 0, 8, 0, 36, 76, 0, 0]
+              <> B.pack [4, 0, 0, 0]
+          )
+
     describe "Extreme Dimensions" $ do
       it "handles minimum size (1x1)" $ do
         let imgRGB = generateImage (\_ _ -> PixelRGB8 255 128 64) 1 1
@@ -339,6 +363,12 @@ spec = do
         -- With quantization, error can be up to 32 (half the range)
         abs (fromIntegral r1 - 32 :: Int) `shouldSatisfy` (< 35)
         abs (fromIntegral r2 - fromIntegral r1 :: Int) `shouldSatisfy` (< 10) -- Cycles should be stable
+
+expectInvalidVP8 :: B.ByteString -> Expectation
+expectInvalidVP8 payload =
+  let chunk = makeVP8Chunk payload
+      encoded = makeRIFFContainer (fromIntegral (B.length chunk)) chunk
+   in fmap (const ()) (decodeWebP encoded) `shouldSatisfy` isLeft
 
 -- Helper: Compute MSE for RGB8 images
 computeMSE :: Image PixelRGB8 -> Image PixelRGB8 -> Double

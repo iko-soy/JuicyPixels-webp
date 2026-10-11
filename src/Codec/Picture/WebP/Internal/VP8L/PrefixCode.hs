@@ -336,24 +336,18 @@ readCodeLengths alphabetSize reader = do
           (isFirst8Bits, reader2a) = readBit reader2
           symbolBits = if isFirst8Bits then 8 else 1
           (symbol1, reader3) = readBits symbolBits reader2a
-
-      when (fromIntegral symbol1 >= alphabetSize)
-        $ Left
-        $ "Simple prefix code symbol " ++ show symbol1 ++ " out of range for alphabet size " ++ show alphabetSize
+          -- Simple symbols span 0..255, even for the 40-symbol distance
+          -- alphabet. Consume every serialized symbol, but build the tree
+          -- from entries in its alphabet; unused entries do not add leaves.
+          lengthsFor symbols =
+            VU.replicate alphabetSize 0
+              VU.// [(fromIntegral symbol, 1) | symbol <- symbols, fromIntegral symbol < alphabetSize]
 
       if numSymbols == 1
-        then do
-          let lengths = VU.replicate alphabetSize 0 VU.// [(fromIntegral symbol1, 1)]
-          return (lengths, reader3)
+        then return (lengthsFor [symbol1], reader3)
         else do
           let (symbol2, reader4) = readBits 8 reader3
-          when (fromIntegral symbol2 >= alphabetSize)
-            $ Left
-            $ "Simple prefix code symbol " ++ show symbol2 ++ " out of range for alphabet size " ++ show alphabetSize
-          let lengths =
-                VU.replicate alphabetSize 0
-                  VU.// [(fromIntegral symbol1, 1), (fromIntegral symbol2, 1)]
-          return (lengths, reader4)
+          return (lengthsFor [symbol1, symbol2], reader4)
     else do
       let (numCodeLengths1, reader2) = readBits 4 reader1
           numCodeLengths = fromIntegral numCodeLengths1 + 4

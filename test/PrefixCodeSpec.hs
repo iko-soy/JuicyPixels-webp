@@ -143,6 +143,21 @@ spec = describe "PrefixCode" $ do
           expectCompactTable 512 code
           check code reader [0 .. 16]
 
+    it "keeps direct codes separate from multiple secondary tables" $ do
+      -- The first 254 prefixes are eight-bit codes; the last two each
+      -- contain two nine-bit codes, with canonical values 508..511.
+      let lengths = VU.fromList (replicate 254 8 ++ replicate 4 9)
+      case buildPrefixCode lengths of
+        Left err -> expectationFailure err
+        Right code -> forM_ [0 .. 257] $ \symbol -> do
+          let len = lengths VU.! symbol
+              canonical = if symbol < 254 then symbol else symbol + 254
+              writer = writeBitsReversed len (fromIntegral canonical) emptyBitWriter
+              reader = initBitReader $ bitWriterToByteString $ finalizeBitWriter writer
+              (actual, reader') = decodeSymbol code reader
+          actual `shouldBe` fromIntegral symbol
+          getBitPosition reader' `shouldBe` len
+
     it "decodes single-symbol code" $ do
       let lengths = VU.fromList [0, 0, 5, 0]
           bs = B.pack [0xFF]
@@ -181,6 +196,53 @@ spec = describe "PrefixCode" $ do
         Left err -> expectationFailure $ "Build failed: " ++ err
 
   describe "Code Length Reading" $ do
+    it "ignores unused simple distance symbols in either serialized position" $ do
+      forM_ [(0, 40), (40, 0), (39, 255), (255, 39)] $ \(first, second) -> do
+        let symbol = min first second
+            writer = writeBits 3 5 $ simpleCodeBits [first, second]
+            reader = initBitReader $ bitWriterToByteString $ finalizeBitWriter writer
+        case readCodeLengths 40 reader of
+          Left err -> expectationFailure err
+          Right (lengths, reader') -> do
+            lengths `shouldBe` VU.generate 40 (\i -> if i == symbol then 1 else 0)
+            getBitPosition reader' `shouldBe` 19
+            fst (readBits 3 reader') `shouldBe` 5
+            case buildPrefixCode lengths of
+              Left err -> expectationFailure err
+              Right code -> do
+                let (decoded, reader'') = decodeSymbol code reader'
+                decoded `shouldBe` fromIntegral symbol
+                getBitPosition reader'' `shouldBe` 19
+                hasReadPastEnd reader'' `shouldBe` False
+
+    it "preserves the distance alphabet boundary and duplicate simple symbols" $ do
+      forM_ [[0, 39], [39, 39]] $ \symbols -> do
+        let reader = initBitReader $ bitWriterToByteString $ finalizeBitWriter $ simpleCodeBits symbols
+        case readCodeLengths 40 reader of
+          Left err -> expectationFailure err
+          Right (lengths, reader') -> do
+            lengths `shouldBe` VU.generate 40 (\i -> if i `elem` symbols then 1 else 0)
+            getBitPosition reader' `shouldBe` 19
+            buildPrefixCode lengths `shouldSatisfy` (not . isLeft)
+
+    it "rejects trees with no simple symbols in the distance alphabet" $ do
+      forM_ [[40], [255], [40, 255], [255, 40]] $ \symbols -> do
+        let reader = initBitReader $ bitWriterToByteString $ finalizeBitWriter $ simpleCodeBits symbols
+            result = do
+              (lengths, _) <- readCodeLengths 40 reader
+              buildPrefixCode lengths
+        result `shouldSatisfy` isLeft
+
+    it "retains input exhaustion when an unused simple symbol precedes a truncated symbol" $ do
+      let bytes = bitWriterToByteString $ finalizeBitWriter $ simpleCodeBits [255, 1]
+      case readCodeLengths 40 (initBitReader $ B.take 2 bytes) of
+        Left err -> expectationFailure err
+        Right (lengths, reader) -> do
+          hasReadPastEnd reader `shouldBe` True
+          case buildPrefixCode lengths of
+            Left err -> expectationFailure err
+            Right code -> hasReadPastEnd (snd $ decodeSymbol code reader) `shouldBe` True
+
     it "rejects an oversubscribed code-length alphabet" $ do
       let header = writeBits 4 0 $ writeBit False emptyBitWriter
           writer = foldl (\w _ -> writeBits 3 1 w) header [1 .. 4 :: Int]
@@ -260,3 +322,10 @@ expectCompactTable _ _ = expectationFailure "Expected table code"
 
 retainedTableBytes :: VU.Vector Word32 -> Int
 retainedTableBytes (VUB.V_Word32 (VP.Vector _ _ bytes)) = sizeofByteArray bytes
+
+-- Always serialize the first symbol in eight bits, including values 0 and 1.
+simpleCodeBits :: [Int] -> BitWriter
+simpleCodeBits symbols =
+  foldl (\writer symbol -> writeBits 8 (fromIntegral symbol) writer) header symbols
+  where
+    header = writeBit True $ writeBit (length symbols == 2) $ writeBit True emptyBitWriter

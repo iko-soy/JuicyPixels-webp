@@ -91,4 +91,3 @@ decideUpdates stats optimalProbs = do
             if savings > overhead
               then (newProb, True)
               else (oldProb, False)
-

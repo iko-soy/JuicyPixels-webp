@@ -22,15 +22,30 @@ extra-source-files:
     test/data/regression/vp8-filter-delta-clipping.webp
     test/data/regression/vp8-missing-coefficients.webp
     test/data/regression/vp8-quantizer.webp
+    test/data/regression/vp8-segment-default-absolute.webp
     test/data/regression/vp8-segment-quantizer.webp
+    test/data/regression/vp8-short-bool-coefficients.webp
+    test/data/regression/vp8-short-bool-modes.webp
+    test/data/regression/vp8-truncated-bool-coefficients.webp
+    test/data/regression/vp8-truncated-bool-header.webp
+    test/data/regression/vp8-truncated-bool-modes.webp
+    test/data/regression/vp8-wht-pass-order.webp
     test/data/regression/vp8l-copy-exact.webp
     test/data/regression/vp8l-copy-overrun.webp
+    test/data/regression/vp8l-duplicate-color.webp
+    test/data/regression/vp8l-duplicate-palette.webp
+    test/data/regression/vp8l-duplicate-predictor.webp
+    test/data/regression/vp8l-duplicate-separated.webp
+    test/data/regression/vp8l-duplicate-subgreen.webp
     test/data/regression/vp8l-incomplete.webp
     test/data/regression/vp8l-invalid-backref.webp
     test/data/regression/vp8l-long-code.webp
     test/data/regression/vp8l-meta-prefix.webp
     test/data/regression/vp8l-oversubscribed.webp
     test/data/regression/vp8l-truncated-pixels.webp
+    test/data/regression/vp8l-unique-transforms.webp
+    test/data/regression/vp8l-unused-distance-first.webp
+    test/data/regression/vp8l-unused-distance-second.webp
     test/data/regression/vp8-fixtures.md
     test/data/regression/vp8l-fixtures.md
 
