@@ -16,6 +16,14 @@ coefficient partition sizes that exceed the available data. Additional cases
 exercise entropy groups across both axes, predictor-map rows before and after
 palette expansion, and direct Huffman entries alongside multiple secondary tables.
 
+The specification validation regressions also cover keyframe segmentation
+defaults, exhausted VP8 arithmetic streams, repeated VP8L transforms, unknown
+ALPH compression methods, animation flags and duplicate frame subchunks, RIFF
+truncation, and the VP8X canvas-area limit. Encoder checks cover the 19-bit VP8
+first-partition limit and animation canvas geometry, even offsets, and 24-bit
+durations. Boundary controls preserve valid short streams, trailing RIFF data,
+unknown animation subchunks, and the largest representable metadata values.
+
 ## Full-suite validation
 
 Run all functional, property, quality, and stress tests with:

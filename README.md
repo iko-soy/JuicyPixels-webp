@@ -64,10 +64,16 @@ let frames = [WebPEncodeFrame img1 100 0 0, WebPEncodeFrame img2 100 0 0]
 let webpData = encodeWebPAnimation frames canvasWidth canvasHeight quality
 ```
 
+Animation frame offsets must be nonnegative and even, and each frame must fit
+within the canvas. Durations are milliseconds in `0..16777215`. Canvas dimensions
+must be in `1..16777216`, with at most `4294967295` pixels; VP8 frame dimensions
+must be in `1..16383`. Invalid parameters raise an error. VP8 encoding also raises
+an error if its first partition exceeds the format's `524287`-byte limit.
+
 ## Testing
 
 ```bash
-stack test  # 421 tests passing
+stack test
 ```
 
 ## API

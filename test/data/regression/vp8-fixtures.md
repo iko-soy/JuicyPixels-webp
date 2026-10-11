@@ -31,3 +31,23 @@ coefficient case described below.
 | `vp8-filter-delta-clipping.webp` | Frame filter level 5, segment delta −10, reference delta +5, first DC coefficient 16 at QI 0 | Final level 0; gray 140 at `(3,1)` |
 | `vp8-filter-delta-clipping-high.webp` | Frame filter level 60, segment delta +10, reference delta −10, first DC coefficient 254 at QI 0 | Final level 60; gray 222 at `(4,1)`, 213 at `(5,1)`, 241 at `(3,3)`, and 212 at `(4,4)` |
 | `vp8-explicit-zero-context.webp` | First B_DC subblock has sixteen explicit zero tokens; second has DC 144 at QI 0 | Gray 130 at `(0,0)` and 214 at `(4,0)` |
+
+The following fixtures were checked with Pillow's libwebp 1.6.0 decoder.
+The segmentation fixture was constructed with an independent boolean writer;
+its segment map and feature data are not updated, the frame QI is 127, filtering
+is disabled, and the first B_DC subblock has quantized DC 16. The keyframe's
+default absolute segment QI is zero, so the DC factor is 4 and the first
+reconstructed luma value is 136 (RGB 140).
+
+| Fixture | Encoded case and provenance | Expected result |
+| --- | --- | --- |
+| `vp8-segment-default-absolute.webp` | Segmentation enabled without feature updates; frame QI 127 and first DC 16 | Gray 140 at `(0,0)` and `(3,3)`, 135 at `(4,0)`, and 136 at `(4,4)` |
+| `vp8-short-bool-modes.webp` | `vp8-empty-bpred-coefficients.webp` with its mode partition shortened to eight bytes and one unused coefficient byte | Gray 130 at `(0,0)` and 132 at `(4,4)`; libwebp accepts this shortest mode prefix |
+| `vp8-short-bool-coefficients.webp` | `vp8-quantizer.webp` with only its first five coefficient bytes | Gray 214 at `(0,0)` and `(3,3)`; libwebp accepts this shortest coefficient prefix |
+| `vp8-truncated-bool-header.webp` | One zero byte for the compressed header and one zero coefficient byte | `Left "Unexpected end of VP8 compressed header"`; libwebp rejects it |
+| `vp8-truncated-bool-modes.webp` | Independently constructed skipped B_PRED frame with sixteen B_HU modes, retaining eight of the fifteen mode-partition bytes | `Left "Unexpected end of VP8 macroblock modes"`; libwebp accepts the complete frame and rejects this truncation |
+| `vp8-truncated-bool-coefficients.webp` | `vp8-quantizer.webp` with only its first coefficient byte | `Left "Unexpected end of VP8 coefficients"`; libwebp rejects it |
+
+Every shortened fixture has its RIFF, chunk, and first-partition sizes adjusted
+to the bytes actually stored. The rejected files therefore exercise boolean
+reader exhaustion rather than the declared partition-length bounds checks.

@@ -90,7 +90,9 @@ getWebP = do
 
   rest <- getRemainingLazyByteString
   let declared = fromIntegral fileSize - 4
-      payload = BL.take declared rest
+  when (BL.length rest < declared) $
+    fail "RIFF size exceeds the available data"
+  let payload = BL.take declared rest
 
   case runGetOrFail getWebPBody payload of
     Left (_, _, err) -> fail err
@@ -131,13 +133,17 @@ getVP8XChunk = do
 
   canvasWidthMinus1 <- getWord24le
   canvasHeightMinus1 <- getWord24le
+  let canvasWidth = fromIntegral canvasWidthMinus1 + 1
+      canvasHeight = fromIntegral canvasHeightMinus1 + 1
+  when (toInteger canvasWidth * toInteger canvasHeight > 0xFFFFFFFF) $
+    fail "VP8X canvas area exceeds the unsigned 32-bit limit"
 
   return $
     VP8XHeader
       { vp8xHasAlpha = hasAlpha,
         vp8xHasAnimation = hasAnimation,
-        vp8xCanvasWidth = fromIntegral canvasWidthMinus1 + 1,
-        vp8xCanvasHeight = fromIntegral canvasHeightMinus1 + 1
+        vp8xCanvasWidth = canvasWidth,
+        vp8xCanvasHeight = canvasHeight
       }
 
 -- | Read chunks until end of input

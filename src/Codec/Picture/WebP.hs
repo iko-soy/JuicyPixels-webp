@@ -39,8 +39,12 @@ data WebPEncodeFrame = WebPEncodeFrame
 
 -- | Encode animation to WebP
 --
--- Frames are encoded with the lossy VP8 codec. Throws an error if any frame's
--- width or height is outside @1..16383@.
+-- Frames are encoded with the lossy VP8 codec. Canvas dimensions must be in
+-- @1..16777216@, with at most @4294967295@ pixels. Frame dimensions must be in
+-- @1..16383@, offsets must be nonnegative and even, and each frame must fit
+-- within the canvas. Durations must be in @0..16777215@ milliseconds.
+-- Throws an error for invalid parameters or a VP8 first partition exceeding
+-- @524287@ bytes.
 encodeWebPAnimation ::
   [WebPEncodeFrame] -> -- Frames to encode
   Int ->

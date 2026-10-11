@@ -23,8 +23,8 @@ import Data.Word
 data AnimationFrame = AnimationFrame
   { frameImage :: DynamicImage,
     frameDuration :: Int, -- milliseconds
-    frameX :: Int, -- must be even (odd values are rounded down)
-    frameY :: Int, -- must be even (odd values are rounded down)
+    frameX :: Int, -- must be nonnegative and even
+    frameY :: Int, -- must be nonnegative and even
     frameBlend :: Bool, -- True = alpha blend, False = no blend
     frameDispose :: Bool -- True = dispose to background, False = don't dispose
   }
@@ -53,11 +53,40 @@ encodeAnimation frames canvasWidth canvasHeight bgColor loopCount quality =
       -- Combine all chunks
       allChunks = vp8xChunk <> animChunk <> mconcat anmfChunks
       totalSize = B.length allChunks
-   in makeRIFFContainer (fromIntegral totalSize) allChunks
+   in validateAnimation frames canvasWidth canvasHeight `seq`
+        makeRIFFContainer (fromIntegral totalSize) allChunks
   where
     frameHasAlpha f = case frameImage f of
       ImageRGBA8 _ -> True
       _ -> False
+
+-- | Validate all metadata before converting or encoding any frame pixels.
+validateAnimation :: [AnimationFrame] -> Int -> Int -> ()
+validateAnimation frames canvasWidth canvasHeight
+  | canvasWidth < 1 || canvasWidth > 16777216 || canvasHeight < 1 || canvasHeight > 16777216 =
+      error $ "Animation encoding requires canvas width and height in [1, 16777216], got " ++ show canvasWidth ++ "x" ++ show canvasHeight
+  | toInteger canvasWidth * toInteger canvasHeight > 4294967295 =
+      error "Animation encoding requires canvas area at most 4294967295 pixels"
+  | otherwise = foldr (\frame rest -> validateFrame frame `seq` rest) () frames
+  where
+    validateFrame frame =
+      let width = dynamicMap imageWidth $ frameImage frame
+          height = dynamicMap imageHeight $ frameImage frame
+          x = frameX frame
+          y = frameY frame
+          duration = frameDuration frame
+       in validateVP8Dimensions width height `seq`
+            if x < 0 || y < 0 || odd x || odd y
+              then error "Animation encoding requires nonnegative, even frame offsets"
+              else
+                -- Subtract the bounded frame dimensions rather than adding
+                -- untrusted offsets, which could overflow Int.
+                if x > canvasWidth - width || y > canvasHeight - height
+                  then error "Animation frame exceeds canvas bounds"
+                  else
+                    if duration < 0 || duration > 16777215
+                      then error "Animation encoding requires frame durations in [0, 16777215] milliseconds"
+                      else ()
 
 -- | Encode a single animation frame
 encodeAnimFrame :: Int -> AnimationFrame -> B.ByteString

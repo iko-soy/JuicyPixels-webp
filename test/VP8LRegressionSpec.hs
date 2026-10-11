@@ -2,12 +2,32 @@ module VP8LRegressionSpec (spec) where
 
 import Codec.Picture.Types
 import Codec.Picture.WebP (decodeWebP)
+import Codec.Picture.WebP.Internal.VP8L (decodeVP8LHeaderless)
+import Control.Monad (forM_)
 import qualified Data.ByteString as B
 import qualified Data.Vector.Storable as VS
 import Test.Hspec
 
 spec :: Spec
 spec = describe "VP8L decoder regressions" $ do
+  -- Independently hand-packed 1x1 streams. libwebp rejects every fixture;
+  -- their payloads differ only in the repeated transform sequence.
+  forM_ [("predictor", 0), ("color", 1), ("subgreen", 2), ("palette", 3), ("separated", 2)] $ \(name, transformType) ->
+    it ("rejects duplicate transform types: " ++ name) $ do
+      input <- B.readFile ("test/data/regression/vp8l-duplicate-" ++ name ++ ".webp")
+      let expected = Left ("Duplicate VP8L transform type: " ++ show (transformType :: Int))
+      fmap (const ()) (decodeWebP input) `shouldBe` expected
+      -- ALPH uses this same transform syntax without the five-byte VP8L header.
+      fmap (const ()) (decodeVP8LHeaderless 1 1 (B.drop 25 input)) `shouldBe` expected
+
+  it "allows all four distinct transforms in stream order" $ do
+    -- Subtract-green, predictor, palette, color: verified with libwebp.
+    input <- B.readFile "test/data/regression/vp8l-unique-transforms.webp"
+    case decodeWebP input of
+      Right (ImageRGBA8 image) -> pixelAt image 0 0 `shouldBe` PixelRGBA8 30 20 50 254
+      Left err -> expectationFailure err
+      Right _ -> expectationFailure "Expected RGBA output"
+
   it "decodes a complete Huffman tree containing 9-bit codes" $ do
     input <- B.readFile "test/data/regression/vp8l-long-code.webp"
     case decodeWebP input of

@@ -94,6 +94,9 @@ parseVP8Header bs = do
             return (True, fromIntegral prob, d)
           else return (False, 0, d12)
 
+      when (bdEof d13) $
+        Left "Unexpected end of VP8 compressed header"
+
       let remainingBytes = B.drop partitionSize (toStrict rest)
       dctPartitions <- parseDCTPartitions remainingBytes (numPartitions - 1)
 
@@ -180,7 +183,8 @@ parseSegmentation decoder = do
             let (absMode, d) = boolRead 128 d3
             (quants, d') <- parseSegmentQuantizers d
             return (absMode, quants, d')
-          else return (False, VU.replicate 4 0, d3)
+          -- Keyframes reset segment features to absolute zero values.
+          else return (True, VU.replicate 4 0, d3)
 
       (filterStrengths, d5) <-
         if updateData

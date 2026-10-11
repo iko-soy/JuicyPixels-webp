@@ -3,7 +3,8 @@
 Pure Haskell WebP codec for JuicyPixels. Supports both decoding and encoding.
 
 **Total Implementation:** ~11,650 lines of Haskell code across 42 modules
-**Test Status:** 421 tests - all passing
+**Tests:** Functional, interoperability, property, quality, and stress suites;
+see `test/TestNotes.md` for validation commands and regression coverage.
 
 ---
 
@@ -42,6 +43,7 @@ Pure Haskell WebP codec for JuicyPixels. Supports both decoding and encoding.
 - Loop filter (normal and simple variants)
 - YCbCr to RGB conversion
 - Segmentation support (up to 4 segments)
+- Keyframe segment defaults and arithmetic-stream exhaustion validation
 - Output: `ImageRGB8` (or `ImageRGBA8` with alpha)
 
 #### Alpha Channel (ALPH Chunk)
@@ -63,6 +65,7 @@ Pure Haskell WebP codec for JuicyPixels. Supports both decoding and encoding.
 - 1-based width/height fields handled correctly
 - Reserved fields ignored per spec
 - RIFF chunk parsing with padding
+- Declared RIFF length and unsigned 32-bit canvas-area validation
 
 ### Encoding
 
@@ -99,6 +102,7 @@ Pure Haskell WebP codec for JuicyPixels. Supports both decoding and encoding.
 - ANMF frame creation with metadata
 - VP8X extended header with animation flag
 - Per-frame VP8/VP8L encoding with optional alpha
+- Validation of canvas and frame geometry, even offsets, and 24-bit durations
 
 #### Container Creation
 - `makeRIFFContainer` - RIFF envelope

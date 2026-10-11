@@ -3,12 +3,26 @@
 module AlphaSpec (spec) where
 
 import Codec.Picture.WebP.Internal.Alpha
+import Control.Monad (forM_)
 import qualified Data.ByteString as B
 import qualified Data.Vector.Storable as VS
 import Test.Hspec
 
 spec :: Spec
 spec = describe "Alpha Channel" $ do
+  describe "Compression Method" $ do
+    -- Hand-packed headerless VP8L: no transforms/cache/meta codes, with
+    -- single-symbol prefix codes that produce green=128 (the alpha value).
+    let compressed = B.pack [0x28, 0x60, 0x01, 0x0a, 0xd0, 0xff, 0x02, 0x00]
+    it "decodes lossless compression method 1" $ do
+      decodeAlpha 1 1 (B.cons 1 compressed) `shouldBe` Right (VS.singleton 128)
+
+    forM_ [2, 3] $ \compression ->
+      it ("rejects unknown compression method " ++ show compression) $ do
+        let expected = Left ("Unsupported ALPH compression method: " ++ show compression)
+        decodeAlpha 1 1 (B.cons compression compressed) `shouldBe` expected
+        decodeAlpha 1 1 (B.singleton compression) `shouldBe` expected
+
   describe "Raw Alpha Decoding" $ do
     it "decodes uncompressed alpha" $ do
       let header = 0x00 -- No filtering, no compression

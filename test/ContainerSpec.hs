@@ -2,6 +2,8 @@
 
 module ContainerSpec (spec) where
 
+import Codec.Picture.Types (PixelRGBA8 (..), generateImage)
+import Codec.Picture.WebP (decodeWebP, encodeWebPLossless)
 import Codec.Picture.WebP.Internal.Container
 import Data.Bits
 import qualified Data.ByteString as B
@@ -26,6 +28,14 @@ spec = describe "Container" $ do
     it "validates correct RIFF+WEBP header" $ do
       let header = makeRIFFHeader "WEBP" 20
       parseWebP header `shouldSatisfy` isLeft -- Will fail on missing chunks but header is valid
+    it "rejects missing RIFF bytes even when the image chunk is complete" $ do
+      let complete = encodeWebPLossless $ generateImage (\_ _ -> PixelRGBA8 12 34 56 255) 1 1
+          truncated = B.take 4 complete <> word32ToBytes (fromIntegral $ B.length complete + 100) <> B.drop 8 complete
+      fmap (const ()) (decodeWebP truncated) `shouldSatisfy` isLeft
+
+    it "ignores data after the declared RIFF size" $ do
+      let complete = encodeWebPLossless $ generateImage (\_ _ -> PixelRGBA8 12 34 56 255) 1 1
+      fmap (const ()) (decodeWebP (complete <> "trailing data")) `shouldBe` Right ()
   describe "Simple VP8L Format" $ do
     it "parses simple VP8L structure" $ do
       let vp8lChunk = makeVP8LChunk [0x2F, 0, 0, 0, 0, 0, 0, 0]
@@ -55,6 +65,19 @@ spec = describe "Container" $ do
         Left err -> expectationFailure $ "Parse failed: " ++ err
 
   describe "Extended VP8X Format" $ do
+    it "rejects canvas areas above the unsigned 32-bit limit" $ do
+      let vp8xChunk = makeVP8XChunk 0x00 65535 65535
+          webp = makeRIFFHeader "WEBP" (fromIntegral $ B.length vp8xChunk) <> vp8xChunk
+      parseWebP webp `shouldSatisfy` isLeft
+
+    it "accepts the largest permitted canvas area without allocating pixels" $ do
+      let vp8xChunk = makeVP8XChunk 0x00 65534 65536
+          webp = makeRIFFHeader "WEBP" (fromIntegral $ B.length vp8xChunk) <> vp8xChunk
+      case parseWebP webp of
+        Right (WebPExtended header _) -> do
+          toInteger (vp8xCanvasWidth header) * toInteger (vp8xCanvasHeight header) `shouldBe` 4294967295
+        other -> expectationFailure $ "Unexpected result: " ++ show other
+
     it "parses VP8X header" $ do
       let vp8xChunk = makeVP8XChunk 0x00 100 100
           webp = makeRIFFHeader "WEBP" (fromIntegral $ B.length vp8xChunk) <> vp8xChunk

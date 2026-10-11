@@ -32,7 +32,9 @@ data WebPAnimFrame = WebPAnimFrame
 
 -- | Decode animation frames from a WebP file
 decodeAnimation :: WebPFile -> Either String [WebPAnimFrame]
-decodeAnimation (WebPExtended _header chunks) = do
+decodeAnimation (WebPExtended header chunks) = do
+  when (not $ vp8xHasAnimation header) $
+    Left "Not an animated WebP file"
   _animHeader <- findAnimHeader chunks
   anmfChunks <- findAnimFrames chunks
 
@@ -57,6 +59,14 @@ findAnimFrames chunks = Right $ collectFrames chunks
 -- | Decode a single animation frame
 decodeAnimFrame :: (AnimFrame, [WebPChunk]) -> Either String WebPAnimFrame
 decodeAnimFrame (frame, subChunks) = do
+  -- ANMF may contain one image bitstream and at most one alpha chunk.
+  -- Unknown chunks are allowed and do not affect these counts.
+  let imageChunkCount = length [() | ChunkVP8 _ <- subChunks] + length [() | ChunkVP8L _ <- subChunks]
+  when (imageChunkCount > 1) $
+    Left "Multiple image bitstream chunks in animation frame"
+  when (length [() | ChunkALPH _ <- subChunks] > 1) $
+    Left "Multiple ALPH chunks in animation frame"
+
   let x = anmfX frame
       y = anmfY frame
       duration = anmfDuration frame
@@ -102,7 +112,9 @@ findVP8LInChunks (_ : rest) = findVP8LInChunks rest
 -- | Decode animation with proper canvas compositing
 -- Returns composited frames as RGBA8 images
 decodeAnimationWithCompositing :: Int -> Int -> WebPFile -> Either String [Image PixelRGBA8]
-decodeAnimationWithCompositing canvasWidth canvasHeight (WebPExtended _header chunks) = do
+decodeAnimationWithCompositing canvasWidth canvasHeight (WebPExtended header chunks) = do
+  when (not $ vp8xHasAnimation header) $
+    Left "Not an animated WebP file"
   when (canvasWidth <= 0 || canvasHeight <= 0) $
     Left "Invalid canvas dimensions"
   when (canvasWidth * canvasHeight > maxCanvasPixels) $

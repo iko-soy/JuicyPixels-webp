@@ -279,6 +279,57 @@ spec = describe "Animation" $ do
         `shouldBe` Left "Invalid VP8L signature: 0"
 
   describe "File Format" $ do
+    it "requires the animation flag in both animation APIs" $ do
+      let frame = losslessFrame (PixelRGBA8 255 0 0 255) False
+          encoded = animationDataWithFlag False [frame]
+
+      expectAnimationError "Not an animated WebP file" encoded
+
+    mapM_
+      ( \(description, first, second) ->
+          it ("rejects " ++ description ++ " in an ANMF chunk") $ do
+            let encoded = animationData [frameChunk False (first <> unknownChunk <> second)]
+            expectAnimationError "Multiple image bitstream chunks in animation frame" encoded
+      )
+      [ ("duplicate VP8 chunks", lossyImageChunk, lossyImageChunk),
+        ("duplicate VP8L chunks", losslessImageChunk, losslessImageChunk),
+        ("VP8 followed by VP8L", lossyImageChunk, losslessImageChunk),
+        ("VP8L followed by VP8", losslessImageChunk, lossyImageChunk)
+      ]
+
+    it "rejects duplicate ALPH chunks in an ANMF chunk" $ do
+      let encoded = animationData [frameChunk False (alphaChunk <> unknownChunk <> alphaChunk <> lossyImageChunk)]
+
+      expectAnimationError "Multiple ALPH chunks in animation frame" encoded
+
+    it "allows unknown subchunks around a lossless frame" $ do
+      let encoded = animationData [frameChunk False (unknownChunk <> losslessImageChunk <> unknownChunk)]
+
+      fmap (map (\frame -> pixelAt (convertRGBA8 $ webpFrameImage frame) 0 0)) (decodeWebPAnimation encoded)
+        `shouldBe` Right [PixelRGBA8 255 0 0 255]
+      fmap (map (\img -> pixelAt img 0 0)) (decodeWebPAnimationComposited encoded)
+        `shouldBe` Right [PixelRGBA8 255 0 0 255]
+
+    it "allows one ALPH chunk with a lossy frame and unknown subchunks" $ do
+      let encoded = animationData [frameChunk False (alphaChunk <> unknownChunk <> lossyImageChunk <> unknownChunk)]
+          alphaAt img = let PixelRGBA8 _ _ _ alpha = pixelAt img 0 0 in alpha
+
+      fmap (map (alphaAt . convertRGBA8 . webpFrameImage)) (decodeWebPAnimation encoded)
+        `shouldBe` Right [128]
+      fmap (map alphaAt) (decodeWebPAnimationComposited encoded)
+        `shouldBe` Right [128]
+
+    it "uses contained image dimensions when the ANMF dimensions differ" $ do
+      let img = generateImage (\_ _ -> PixelRGBA8 255 0 0 255) 2 2
+          frame = frameChunk False (B.drop 12 $ encodeWebPLossless img)
+          body = makeVP8XChunk 2 2 True True <> makeANIMChunk 0 0 <> frame
+          encoded = makeRIFFContainer (fromIntegral $ B.length body) body
+
+      fmap (map (dynamicImageWidth . webpFrameImage)) (decodeWebPAnimation encoded)
+        `shouldBe` Right [2]
+      fmap (map (\decoded -> pixelAt decoded 1 1)) (decodeWebPAnimationComposited encoded)
+        `shouldBe` Right [PixelRGBA8 255 0 0 255]
+
     it "produces valid RIFF container" $ do
       let frame = WebPEncodeFrame (ImageRGB8 $ generateImage (\_ _ -> PixelRGB8 255 0 0) 16 16) 100 0 0
           encoded = encodeWebPAnimation [frame] 16 16 80
@@ -334,9 +385,24 @@ frameChunk blend imageChunk =
    in makeANMFChunk frame imageChunk
 
 animationData :: [B.ByteString] -> B.ByteString
-animationData frames =
-  let body = makeVP8XChunk 1 1 True True <> makeANIMChunk 0 0 <> mconcat frames
+animationData = animationDataWithFlag True
+
+animationDataWithFlag :: Bool -> [B.ByteString] -> B.ByteString
+animationDataWithFlag hasAnimation frames =
+  let body = makeVP8XChunk 1 1 True hasAnimation <> makeANIMChunk 0 0 <> mconcat frames
    in makeRIFFContainer (fromIntegral $ B.length body) body
+
+expectAnimationError :: String -> B.ByteString -> Expectation
+expectAnimationError err encoded = do
+  fmap length (decodeWebPAnimation encoded) `shouldBe` Left err
+  fmap length (decodeWebPAnimationComposited encoded) `shouldBe` Left err
+
+losslessImageChunk, lossyImageChunk, alphaChunk, unknownChunk :: B.ByteString
+losslessImageChunk = B.drop 12 $ encodeWebPLossless $ generateImage (\_ _ -> PixelRGBA8 255 0 0 255) 1 1
+lossyImageChunk = B.drop 12 $ encodeWebPLossy (generateImage (\_ _ -> PixelRGB8 255 0 0) 1 1) 80
+-- A two-byte, uncompressed ALPH payload with a single translucent pixel.
+alphaChunk = "ALPH" <> B.pack [2, 0, 0, 0, 0, 128]
+unknownChunk = "JUNK" <> B.pack [2, 0, 0, 0, 23, 42]
 
 dynamicImageWidth :: DynamicImage -> Int
 dynamicImageWidth (ImageRGB8 img) = imageWidth img

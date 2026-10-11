@@ -29,14 +29,14 @@ decodeAlpha width height bs
           compression = headerByte .&. 0x03
 
       alphaData <-
-        if compression == 0
-          then do
+        case compression of
+          0 -> do
             let raw = B.drop 1 bs
             when (B.length raw < width * height) $
               Left $
                 "ALPH chunk too short: " ++ show (B.length raw) ++ " bytes for " ++ show width ++ "x" ++ show height ++ " alpha plane"
             Right $ VS.fromList $ B.unpack $ B.take (width * height) raw
-          else do
+          1 -> do
             let vp8lData = B.drop 1 bs
             pixels <- decodeVP8LHeaderless width height vp8lData
 
@@ -45,6 +45,7 @@ decodeAlpha width height bs
                    in fromIntegral ((pixel `shiftR` 8) .&. 0xFF)
 
             return alphaVals
+          _ -> Left $ "Unsupported ALPH compression method: " ++ show compression
 
       filtered <- applyAlphaFiltering width height filtering alphaData
       return filtered
